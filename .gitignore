@@ -1,15 +1,81 @@
-.idea/
+# Dependencies
+node_modules/
 
-node_modules
-.expo
-.expo-shared
-dist
-build
-coverage
+# Environment and secrets
 .env
 .env.*
 !.env.example
+*.local
+*.secret
+*.secrets
+secrets/
+private/
+credentials/
+*.pem
+*.key
+*.cert
+*.crt
+*.p8
+*.p12
+*.mobileprovision
+*service-account*.json
+*service_account*.json
+*credentials*.json
+google-services.json
+GoogleService-Info.plist
+
+# Android signing and release artifacts
+*.jks
+*.keystore
+*.aab
+*.apk
+android/key.properties
+android/app/upload-keystore.jks
+apps/mobile/android/key.properties
+apps/mobile/android/app/upload-keystore.jks
+
+# Expo and React Native
+.expo/
+.expo-shared/
+expo-env.d.ts
+.metro-health-check*
+web-build/
+android/
+ios/
+apps/mobile/android/
+apps/mobile/ios/
+
+# Build outputs and caches
+dist/
+build/
+coverage/
+.turbo/
+.cache/
+*.tsbuildinfo
+
+# Logs
 *.log
-android
-ios
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+pnpm-debug.*
+
+# Local databases and dumps
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.sql
+!docs/**/*.sql
 apps/api/prisma/dev.db
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.orig.*

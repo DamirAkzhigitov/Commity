@@ -2,6 +2,7 @@
   "name": "personal-assistant",
   "private": true,
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "description": "Android-first AI personal assistant with tasks, notes, reminders, memory, and subscriptions.",
   "workspaces": [
     "apps/*",
