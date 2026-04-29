@@ -1,0 +1,22 @@
+{
+  "name": "personal-assistant",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Android-first AI personal assistant with tasks, notes, reminders, memory, and subscriptions.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:mobile": "npm run start -w @personal-assistant/mobile",
+    "dev:api": "npm run start:dev -w @personal-assistant/api",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "prisma:generate": "npm run prisma:generate -w @personal-assistant/api",
+    "prisma:migrate": "npm run prisma:migrate -w @personal-assistant/api"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

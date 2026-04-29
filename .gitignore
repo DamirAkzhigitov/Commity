@@ -1,0 +1,15 @@
+.idea/
+
+node_modules
+.expo
+.expo-shared
+dist
+build
+coverage
+.env
+.env.*
+!.env.example
+*.log
+android
+ios
+apps/api/prisma/dev.db
