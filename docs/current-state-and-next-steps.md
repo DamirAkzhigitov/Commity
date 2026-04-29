@@ -44,55 +44,57 @@ npm run typecheck
 npm run build
 ```
 
-## Git State Recommendation
-
-Use one Git repository at the project root. If Expo created `apps/mobile/.git`,
-remove that nested Git directory before the first root commit.
-
-Recommended first checkpoint:
-
-```bash
-cd /home/xiao/Documents/Projects/PersonalAssistant
-rm -rf apps/mobile/.git
-git init
-git add .
-git commit -m "Initialize personal assistant MVP scaffold"
-```
-
-Commit after each working feature slice so the MVP can be reviewed and rolled
-back safely.
-
 ## Immediate Next Steps
 
-1. Initialize root Git and make the first scaffold commit.
-2. Add a local development database setup, likely Docker Compose with PostgreSQL,
+1. [ ] Initialize root Git and make the first scaffold commit.
+2. [ ] Add a local development database setup, likely Docker Compose with PostgreSQL,
    Redis, and the `pgvector` extension.
-3. Run the first Prisma migration and confirm the API can connect to Postgres.
-4. Replace demo `userId` values with a real auth decision: Supabase Auth,
+3. [ ] Run the first Prisma migration and confirm the API can connect to Postgres.
+4. [ ] Replace demo `userId` values with a real auth decision: Supabase Auth,
    Firebase Auth, or custom auth.
-5. Connect the mobile app to the backend health endpoint and assistant chat endpoint.
-6. Build the first real mobile screens: chat, task list, notes, reminders, and settings.
-7. Persist assistant-created tasks/notes/reminders in the backend instead of only
+5. [ ] Connect the mobile app to the backend health endpoint and assistant chat endpoint.
+6. [ ] Build the first real mobile screens: chat, task list, notes, reminders, and settings.
+7. [ ] Persist assistant-created tasks/notes/reminders in the backend instead of only
    returning proposed actions.
-8. Add local notifications for user-created reminders.
-9. Add durable usage tracking in Postgres and enforce subscription quotas.
-10. Add Google Play Billing integration on mobile and real backend purchase verification.
+8. [ ] Add local notifications for user-created reminders.
+9. [ ] Add durable usage tracking in Postgres and enforce subscription quotas.
+10. [ ] Add Google Play Billing integration on mobile and real backend purchase verification.
 
 ## Technical Questions To Answer
 
-- Auth provider: should we use Supabase Auth, Firebase Auth, or custom auth?
-- Backend hosting: where will the API and database run for MVP testing?
-- Database setup: local Docker Compose only, managed Postgres, or both?
-- AI model policy: which OpenAI models are allowed for Free, Plus, and Pro users?
-- Quotas: how many messages and tokens should each subscription tier include?
-- Memory strategy: should memory start cloud-only, or should local-private mode be
-  part of the first public release?
-- Reminder strategy: should proactive reminders be server-driven push notifications,
-  local-only scheduled notifications, or a hybrid from the first MVP?
-- Data deletion: should account deletion be immediate, delayed with recovery, or
-  manual for the MVP?
-- Analytics: should we use PostHog, Firebase Analytics, or only backend logs at first?
-- Error monitoring: should Sentry be added before internal testing?
+- Auth provider: Supabase Auth
+- Backend hosting: Railway
+- Database setup: local Docker Compose for backend development, Railway Postgres for
+  MVP infrastructure data only: users, subscriptions, usage limits, purchase
+  verification, audit/security metadata, and non-sensitive operational logs.
+  Personal assistant data stays on-device by default.
+- AI model policy: Free uses a capable low-cost model with strict message/token caps
+  so first impressions stay strong; Plus uses the same model with higher quotas and
+  limited upgrades for complex tasks; Pro can use the best available model for
+  complex reasoning, planning, and memory-heavy tasks.
+- Quotas: MVP placeholder to revisit in detail. Free trial gets 25 messages total
+  or 3 days, whichever comes first, with strict token caps; Plus gets 1,000
+  messages/month with moderate token caps; Pro gets 5,000 messages/month with
+  higher token caps and priority access to better models.
+- Memory strategy: local-first for MVP. Personal data, tasks, notes, reminders, and
+  memory are stored on-device by default. Optional user-controlled backup/sync can
+  use Google Drive or similar platform storage later. The backend should avoid
+  storing personal assistant data unless needed for billing, auth, abuse prevention,
+  or explicit user-enabled cloud features.
+- Reminder strategy: local-only scheduled notifications for MVP. The backend/AI can
+  create structured reminder candidates, but the mobile app schedules confirmed
+  notifications on-device. Server-driven push reminders are deferred until proactive
+  nudges, multi-device sync, or richer background scheduling are needed.
+- Data deletion: immediate local data deletion from the app, plus immediate deletion
+  or anonymization of backend infrastructure records where legally allowed. Purchase
+  and audit records may be retained only as required for fraud prevention, billing,
+  tax, or legal compliance.
+- Analytics: only backend operational logs at first, with no personal message
+  content. Add privacy-preserving product analytics later only after explicit
+  consent and a clear privacy policy.
+- Error monitoring: add Sentry before internal testing for API and mobile crashes,
+  but disable collection of personal message content, breadcrumbs containing
+  assistant text, and sensitive local data.
 
 ## Product Questions To Answer
 
