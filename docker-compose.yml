@@ -1,0 +1,15 @@
+services:
+  postgres:
+    # pgvector required: prisma schema uses vector on MemoryItem.embedding
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: pa
+      POSTGRES_PASSWORD: pa
+      POSTGRES_DB: personal_assistant
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pa -d personal_assistant"]
+      interval: 5s
+      timeout: 5s
+      retries: 5

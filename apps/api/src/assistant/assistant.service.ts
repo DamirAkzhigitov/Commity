@@ -1,8 +1,9 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { type AssistantAction } from '@personal-assistant/shared';
 import OpenAI from 'openai';
 import { BillingService } from '../billing/billing.service';
+import { QuotaPolicyService } from '../quota/quota-policy.service';
 import { UsageService } from '../usage/usage.service';
 
 export interface ChatInput {
@@ -10,29 +11,55 @@ export interface ChatInput {
   message: string;
 }
 
+function estimateChatCostUsd(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  config: ConfigService,
+): number {
+  if (model === 'mock') {
+    return 0;
+  }
+  const inRate = Number(config.get('OPENAI_INPUT_USD_PER_MILLION') ?? 0.15);
+  const outRate = Number(config.get('OPENAI_OUTPUT_USD_PER_MILLION') ?? 0.6);
+  return (inputTokens * inRate + outputTokens * outRate) / 1_000_000;
+}
+
 @Injectable()
 export class AssistantService {
   private readonly openai: OpenAI | null;
 
   constructor(
-    config: ConfigService,
+    private readonly config: ConfigService,
     private readonly billingService: BillingService,
+    private readonly quotaPolicyService: QuotaPolicyService,
     private readonly usageService: UsageService,
   ) {
-    const apiKey = config.get<string>('OPENAI_API_KEY');
+    const apiKey = this.config.get<string>('OPENAI_API_KEY');
     this.openai = apiKey ? new OpenAI({ apiKey }) : null;
   }
 
   async chat(input: ChatInput) {
-    const entitlement = this.billingService.getEntitlement(input.userId);
+    const entitlement = await this.billingService.getEntitlement(input.userId);
 
     if (!entitlement.active) {
-      throw new UnauthorizedException('Active subscription entitlement is required.');
+      throw new ForbiddenException('Active subscription or trial entitlement is required.');
     }
+
+    await this.quotaPolicyService.assertSubscribedChatWithinQuota(input.userId, entitlement);
 
     const plannedActions = this.planActions(input.message);
 
     if (!this.openai) {
+      await this.usageService.record({
+        userId: input.userId,
+        feature: 'chat',
+        model: 'mock',
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedCostUsd: 0,
+      });
+
       return {
         mode: 'mock',
         reply:
@@ -56,13 +83,17 @@ export class AssistantService {
       ],
     });
 
-    this.usageService.record({
+    const inputTokens = response.usage?.input_tokens ?? 0;
+    const outputTokens = response.usage?.output_tokens ?? 0;
+    const modelName = 'gpt-4.1-mini';
+
+    await this.usageService.record({
       userId: input.userId,
       feature: 'chat',
-      model: 'gpt-4.1-mini',
-      inputTokens: response.usage?.input_tokens ?? 0,
-      outputTokens: response.usage?.output_tokens ?? 0,
-      estimatedCostUsd: 0,
+      model: modelName,
+      inputTokens,
+      outputTokens,
+      estimatedCostUsd: estimateChatCostUsd(modelName, inputTokens, outputTokens, this.config),
     });
 
     return {

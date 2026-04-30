@@ -1,28 +1,21 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { CurrentUser, type AuthUser } from '../auth/current-user.decorator';
+import { SupabaseJwtAuthGuard } from '../auth/supabase-jwt-auth.guard';
 import { BillingService } from './billing.service';
+import { GooglePlayVerifyDto } from './google-play-verify.dto';
 
 @Controller('billing')
+@UseGuards(SupabaseJwtAuthGuard)
 export class BillingController {
   constructor(private readonly billingService: BillingService) {}
 
   @Get('entitlement')
-  getEntitlement(@Query('userId') userId = 'demo-user') {
-    return this.billingService.getEntitlement(userId);
+  getEntitlement(@CurrentUser() user: AuthUser) {
+    return this.billingService.getEntitlement(user.sub);
   }
 
   @Post('google-play/verify')
-  verifyGooglePlayPurchase(
-    @Body()
-    body: {
-      userId?: string;
-      purchaseToken: string;
-      productId: string;
-    },
-  ) {
-    return this.billingService.verifyGooglePlayPurchase(
-      body.userId ?? 'demo-user',
-      body.purchaseToken,
-      body.productId,
-    );
+  verifyGooglePlayPurchase(@CurrentUser() user: AuthUser, @Body() body: GooglePlayVerifyDto) {
+    return this.billingService.verifyGooglePlayPurchase(user.sub, body.purchaseToken, body.productId);
   }
 }

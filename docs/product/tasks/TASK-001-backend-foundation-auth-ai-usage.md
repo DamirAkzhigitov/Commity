@@ -16,13 +16,13 @@ Backend
 - **Local DB + runbook**: Keep one canonical local setup path using stable tooling (Docker Compose + Prisma migrations + API boot), with required env vars documented in API env templates.
 
 ## Acceptance Criteria
-- [ ] Supabase Auth JWT verification protects assistant, billing, and usage endpoints.
-- [ ] Demo or hardcoded user IDs are removed from request handling.
-- [ ] Assistant requests are rejected before AI calls when the user is unauthenticated, lacks entitlement, or exceeds quota.
-- [ ] Usage events are persisted in Postgres with user id, model, feature, token counts, estimated cost, and timestamps.
-- [ ] Usage events do not store personal message content or full context packets.
-- [ ] Backend does not persist personal assistant content (messages, tasks, notes, reminders, context packets), and only infrastructure records are written.
-- [ ] API health and local development setup are documented and runnable.
+- [x] Supabase Auth JWT verification protects assistant, billing, and usage endpoints.
+- [x] Demo or hardcoded user IDs are removed from request handling.
+- [x] Assistant requests are rejected before AI calls when the user is unauthenticated, lacks entitlement, or exceeds quota.
+- [x] Usage events are persisted in Postgres with user id, model, feature, token counts, estimated cost, and timestamps.
+- [x] Usage events do not store personal message content or full context packets.
+- [x] Backend does not persist personal assistant content (messages, tasks, notes, reminders, context packets), and only infrastructure records are written.
+- [x] API health and local development setup are documented and runnable.
 
 ## What Will Be Implemented
 - **Auth boundary**: NestJS guard(s) that validate the `Authorization: Bearer` Supabase JWT, attach `userId` (and optionally email/role) to the request context, and return 401 when missing or invalid. Apply globally or per-controller to assistant, billing, and usage routes; keep `GET /health` (and optionally `GET /`) unauthenticated for ops.
@@ -86,3 +86,25 @@ Prefer integration tests with a test Postgres (or Prisma + SQLite only if the te
 
 ## Verification
 - Unit or integration tests cover auth rejection, quota rejection, and successful usage event persistence.
+
+---
+
+## Implementation notes (2026-04)
+
+- **Auth**: `SupabaseJwtAuthGuard` + `SupabaseJwtVerifierService` validate RS256 JWTs via Supabase JWKS (`SUPABASE_URL`, optional `SUPABASE_JWT_AUD`, default `authenticated`), issuer `${SUPABASE_URL}/auth/v1`. Uses `jsonwebtoken` + `fetch` + `crypto.createPublicKey` (avoids ESM-only `jose` in Jest).
+- **Identity**: `User.id` is Supabase `sub`; guard upserts `{ id: sub, email }` on each authenticated request. `demo-user` and body/query `userId` removed from assistant and billing.
+- **Gates**: Assistant flow = JWT → entitlement (trial 25 msgs / 3 days or active subscription) → monthly quota for subscribers → AI (or mock) → `UsageEvent` insert only (no message text).
+- **Usage**: `UsageService.record` writes Prisma rows; mock mode uses `model=mock` and zero tokens/cost.
+- **Tests**: `npm test` = unit only; `npm run test:e2e` requires Postgres + `prisma migrate deploy`.
+- **Docs**: `docker-compose.yml`, `apps/api/.env.example`, `apps/api/README.md`.
+
+## Supabase work report (2026-04)
+
+- **Objective**: Aligned `apps/api` and remote Supabase to infrastructure-only persistence and resolved migration drift/failures.
+- **Migration hardening**: Updated `20260430180500_infra_only_schema_and_rls` to keep infra-only cleanup and RLS while guarding `REVOKE` statements behind role existence checks for `anon` and `authenticated`.
+- **Documentation alignment**: Updated `docs/sql/supabase-baseline-security.sql` with the same guarded role revoke logic for cross-environment execution.
+- **Infra-only cleanup migration**: Added `20260430182000_drop_unused_vector_extension` to remove unused `vector` extension in infra-only mode.
+- **Local DB operations**: Resolved failed migration state (`prisma migrate resolve --rolled-back 20260430180500_infra_only_schema_and_rls`), deployed migrations, and regenerated Prisma client.
+- **Remote Supabase operations**: Applied migrations `20250430120000_init`, `20260430180500_infra_only_schema_and_rls`, and `20260430182000_drop_unused_vector_extension` via MCP.
+- **Verification**: Local and remote schema now contain `public.User`, `public.UsageEvent`, and `public.Subscription` only (plus migration metadata); RLS is enabled on infra tables.
+- **Security advisor status**: `extension_in_public` warning is resolved; remaining `rls_enabled_no_policy` findings are info-level and expected under deny-by-default lock-down.

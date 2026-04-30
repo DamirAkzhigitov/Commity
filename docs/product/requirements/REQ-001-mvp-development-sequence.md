@@ -27,6 +27,7 @@ As an early user, I want to chat with the assistant and safely turn messages int
 
 ## Implementation Notes
 - Backend: prioritize auth, AI proxy, usage events, quota checks, entitlement checks, and non-sensitive operational data.
+- Supabase DB creation defaults: Data API OFF, Automatically expose new tables/functions OFF, Automatic RLS ON.
 - Frontend: prioritize local SQLite models, chat UI, action confirmation UI, reminder scheduling, and settings entry points.
 - Shared: define schemas for chat requests, bounded context packets, assistant responses, action proposals, and local entity payloads.
 - Privacy/billing/release: avoid personal message content in usage logs; add clear AI data sharing copy before internal testing.

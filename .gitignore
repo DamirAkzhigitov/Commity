@@ -67,6 +67,7 @@ pnpm-debug.*
 *.dump
 *.sql
 !docs/**/*.sql
+!apps/api/prisma/migrations/**/*.sql
 apps/api/prisma/dev.db
 
 # IDE and OS files
