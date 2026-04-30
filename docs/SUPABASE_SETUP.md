@@ -27,7 +27,12 @@ Set API environment values in `apps/api/.env`:
 - `SUPABASE_JWT_AUD=authenticated` (default expected by backend)
 - `DATABASE_URL=postgresql://...` (Supabase Postgres connection string)
 
-Do not put service-role keys in mobile clients.
+## Mobile (Expo)
+
+- **Auth only**: the app bundles `@supabase/supabase-js` strictly for `auth` (sign-in, session, refresh). Personal/assistant data is **not** read or written via Supabase PostgREST/Realtime/Storage from the client.
+- **Data API**: leave **Data API OFF** in the Supabase project so mobile cannot use generated table APIs even by mistake.
+- **Same project as the API**: `EXPO_PUBLIC_SUPABASE_URL` must match `SUPABASE_URL` in `apps/api/.env` (same host, e.g. `https://<project-ref>.supabase.co`). If they differ, sign-in still works on mobile but the API will return **401** because the JWT issuer/signature will not match the API’s JWKS fetch target.
+- **Keys**: use the **anon** or **publishable** key in `EXPO_PUBLIC_SUPABASE_ANON_KEY` only. Never ship service-role or `sb_secret_*` keys in the app.
 
 ## Apply baseline hardening
 

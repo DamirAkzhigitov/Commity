@@ -44,11 +44,20 @@ export class SupabaseJwtVerifierService {
     if (!supabaseUrl) {
       throw new Error('SUPABASE_URL is required for JWT verification.');
     }
-    const audience = this.config.get<string>('SUPABASE_JWT_AUD') ?? 'authenticated';
+    const audRaw = this.config.get<string>('SUPABASE_JWT_AUD') ?? 'authenticated';
+    const audiences = audRaw.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
+    const audList = audiences.length > 0 ? audiences : ['authenticated'];
+    const audience: jwt.VerifyOptions['audience'] =
+      audList.length === 1 ? audList[0]! : (audList as [string, ...string[]]);
     const issuer = `${supabaseUrl.replace(/\/$/, '')}/auth/v1`;
 
     const decoded = jwt.decode(token, { complete: true });
     if (!decoded || typeof decoded === 'string' || !decoded.header.kid) {
+      throw new UnauthorizedException('Invalid or expired token.');
+    }
+
+    const alg = decoded.header.alg;
+    if (alg !== 'RS256' && alg !== 'ES256') {
       throw new UnauthorizedException('Invalid or expired token.');
     }
 
@@ -64,7 +73,8 @@ export class SupabaseJwtVerifierService {
       const payload = jwt.verify(token, publicKey, {
         issuer,
         audience,
-        algorithms: ['RS256'],
+        algorithms: [alg as jwt.Algorithm],
+        clockTolerance: 120,
       });
       if (typeof payload === 'string' || !payload) {
         throw new UnauthorizedException('Invalid or expired token.');

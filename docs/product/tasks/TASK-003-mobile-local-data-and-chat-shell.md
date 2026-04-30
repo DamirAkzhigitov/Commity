@@ -28,3 +28,9 @@ Frontend
 
 ## Verification
 - Manual Android flow: sign in, send chat, accept a proposed task, view it in the task list, undo it.
+
+## Slice 1 (done): auth + typed chat client + minimal UI
+- **Mobile**: `AuthProvider` / `useAuth` with **auth-only** Supabase JS (`lib/supabase-auth.ts`: `Pick<SupabaseClient,'auth'>`); session persisted with **DEK in `expo-secure-store`** and ciphertext in AsyncStorage (`lib/supabase-auth-secure-storage.ts`). `/sign-in` and `/chat` (POST `/assistant/chat` with `getAccessTokenForApi()` for refreshed JWTs). Config via `EXPO_PUBLIC_*` (`apps/mobile/.env.example`, root `.env.example`). Vitest: `lib/assistant-chat-wiring.test.ts`, **`lib/supabase-import-boundary.test.ts`** (blocks accidental `@supabase/supabase-js` data client usage outside `lib/supabase-auth.ts`).
+- **API JWT**: `SupabaseJwtVerifierService` accepts **RS256 and ES256** access tokens from current Supabase signing keys.
+- **401 note**: If mobile signs in but chat returns 401, verify **same `SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_URL`** and that API `SUPABASE_URL`/`SUPABASE_JWT_AUD` match the issuing project.
+- **Next slice**: navigation shell (tasks/notes/reminders/goals/settings), local SQLite + encryption, proposal accept/edit/dismiss/undo, privacy-filtered context packets.

@@ -1,5 +1,7 @@
 import { subscriptionPlans, type Task } from '@personal-assistant/shared';
+import { Link } from 'expo-router';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useAuth } from '../context/auth-context';
 
 const sampleTasks: Task[] = [
   {
@@ -24,6 +26,7 @@ const sampleTasks: Task[] = [
 
 export default function HomeScreen() {
   const plusPlan = subscriptionPlans.find((plan) => plan.id === 'plus');
+  const { user, session, isLoading, isSupabaseConfigured } = useAuth();
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -33,6 +36,24 @@ export default function HomeScreen() {
         <Text style={styles.subtitle}>
           Capture tasks, remember notes, schedule reminders, and keep goals moving with a
           backend-controlled OpenAI bridge.
+        </Text>
+        <View style={styles.navRow}>
+          <Link href="/chat" style={styles.navLink}>
+            Chat (API)
+          </Link>
+          <Text style={styles.navDot}>·</Text>
+          <Link href="/sign-in" style={styles.navLink}>
+            Sign in
+          </Link>
+        </View>
+        <Text style={styles.sessionHint}>
+          {isLoading
+            ? 'Checking session…'
+            : !isSupabaseConfigured
+              ? 'Add Supabase env vars to enable sign-in.'
+              : session
+                ? `Signed in: ${user?.email ?? user?.id ?? 'account'}`
+                : 'Not signed in'}
         </Text>
       </View>
 
@@ -92,6 +113,28 @@ const styles = StyleSheet.create({
     color: '#cbd5e1',
     fontSize: 16,
     lineHeight: 24,
+  },
+  navRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  navLink: {
+    color: '#7dd3fc',
+    fontSize: 15,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
+  },
+  navDot: {
+    color: '#94a3b8',
+    fontSize: 15,
+  },
+  sessionHint: {
+    color: '#94a3b8',
+    fontSize: 13,
+    marginTop: 8,
   },
   section: {
     gap: 12,

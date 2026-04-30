@@ -35,7 +35,7 @@ Backend
 - **Documentation**: Runnable instructions for local API + Postgres (migrate, seed if any, env template) and confirmation of the health check endpoint.
 
 ## How It Will Be Implemented
-- **NestJS modules**: Add an `AuthModule` (or auth guard provider in `AppModule`) with a `SupabaseJwtAuthGuard` and optional `@CurrentUser()` decorator using Nest `ExecutionContext`. Use stable JWKS RS256 verification with explicit issuer/audience validation.
+- **NestJS modules**: Add an `AuthModule` (or auth guard provider in `AppModule`) with a `SupabaseJwtAuthGuard` and optional `@CurrentUser()` decorator using Nest `ExecutionContext`. Use stable JWKS verification (RS256 and ES256 / EC signing keys) with explicit issuer/audience validation.
 - **Controller changes** (`assistant`, `billing`, `usage`):
   - `POST /assistant/chat`: body contains only the chat payload agreed with TASK-002 (until then, `message` only); remove `userId` from input; inject user from guard.
   - `GET /billing/entitlement` (and mutating billing routes): require auth; derive `userId` from JWT; remove query default `demo-user`.
@@ -91,7 +91,7 @@ Prefer integration tests with a test Postgres (or Prisma + SQLite only if the te
 
 ## Implementation notes (2026-04)
 
-- **Auth**: `SupabaseJwtAuthGuard` + `SupabaseJwtVerifierService` validate RS256 JWTs via Supabase JWKS (`SUPABASE_URL`, optional `SUPABASE_JWT_AUD`, default `authenticated`), issuer `${SUPABASE_URL}/auth/v1`. Uses `jsonwebtoken` + `fetch` + `crypto.createPublicKey` (avoids ESM-only `jose` in Jest).
+- **Auth**: `SupabaseJwtAuthGuard` + `SupabaseJwtVerifierService` validate **RS256 and ES256** JWTs via Supabase JWKS (`SUPABASE_URL`, optional `SUPABASE_JWT_AUD`, default `authenticated` or comma-separated list), issuer `${SUPABASE_URL}/auth/v1`. Uses `jsonwebtoken` + `fetch` + `crypto.createPublicKey` (avoids ESM-only `jose` in Jest).
 - **Identity**: `User.id` is Supabase `sub`; guard upserts `{ id: sub, email }` on each authenticated request. `demo-user` and body/query `userId` removed from assistant and billing.
 - **Gates**: Assistant flow = JWT → entitlement (trial 25 msgs / 3 days or active subscription) → monthly quota for subscribers → AI (or mock) → `UsageEvent` insert only (no message text).
 - **Usage**: `UsageService.record` writes Prisma rows; mock mode uses `model=mock` and zero tokens/cost.
