@@ -8,6 +8,7 @@ module.exports = {
   testPathIgnorePatterns: ['\\.e2e-spec\\.ts$'],
   moduleNameMapper: {
     '^@personal-assistant/shared$': '<rootDir>/../../packages/shared/src/index.ts',
+    '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   testMatch: ['**/*.spec.ts'],
   transform: {

@@ -5,6 +5,8 @@ import { AppModule } from '../src/app.module';
 import { SupabaseJwtVerifierService } from '../src/auth/supabase-jwt-verifier.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
+const reqId = 'c2b3e4a1-7f0d-4c2a-9e1b-11aa22bb33cc';
+
 describe('API auth, quota, usage (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
@@ -52,14 +54,17 @@ describe('API auth, quota, usage (e2e)', () => {
   });
 
   it('POST /assistant/chat without Authorization returns 401', async () => {
-    await request(app.getHttpServer()).post('/assistant/chat').send({ message: 'hi' }).expect(401);
+    await request(app.getHttpServer())
+      .post('/assistant/chat')
+      .send({ clientRequestId: reqId, message: 'hi' })
+      .expect(401);
   });
 
   it('POST /assistant/chat with invalid JWT returns 401', async () => {
     await request(app.getHttpServer())
       .post('/assistant/chat')
       .set('Authorization', 'Bearer bad-token')
-      .send({ message: 'hi' })
+      .send({ clientRequestId: reqId, message: 'hi' })
       .expect(401);
   });
 
@@ -67,7 +72,7 @@ describe('API auth, quota, usage (e2e)', () => {
     await request(app.getHttpServer())
       .post('/assistant/chat')
       .set('Authorization', 'Bearer good')
-      .send({ message: 'hi', userId: 'attacker' })
+      .send({ clientRequestId: reqId, message: 'hi', userId: 'attacker' })
       .expect(400);
   });
 
@@ -95,7 +100,7 @@ describe('API auth, quota, usage (e2e)', () => {
     await request(app.getHttpServer())
       .post('/assistant/chat')
       .set('Authorization', 'Bearer good')
-      .send({ message: 'one more' })
+      .send({ clientRequestId: reqId, message: 'one more' })
       .expect(403);
 
     const count = await prisma.usageEvent.count({ where: { userId: 'e2e-user-1' } });
@@ -133,7 +138,7 @@ describe('API auth, quota, usage (e2e)', () => {
     await request(app.getHttpServer())
       .post('/assistant/chat')
       .set('Authorization', 'Bearer good')
-      .send({ message: 'over limit' })
+      .send({ clientRequestId: reqId, message: 'over limit' })
       .expect(403);
 
     expect(await prisma.usageEvent.count({ where: { userId: 'e2e-user-1' } })).toBe(planLimit);
@@ -143,10 +148,12 @@ describe('API auth, quota, usage (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post('/assistant/chat')
       .set('Authorization', 'Bearer good')
-      .send({ message: 'hello quota world' })
+      .send({ clientRequestId: reqId, message: 'hello quota world' })
       .expect(200);
 
     expect(res.body.mode).toBe('mock');
+    expect(res.body.clientRequestId).toBe(reqId);
+    expect(Array.isArray(res.body.proposals)).toBe(true);
 
     const rows = await prisma.usageEvent.findMany({ where: { userId: 'e2e-user-1' } });
     expect(rows).toHaveLength(1);

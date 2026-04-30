@@ -43,7 +43,12 @@ describe('AssistantService', () => {
       active: false,
     });
 
-    await expect(service.chat({ userId: 'u1', message: 'hello' })).rejects.toThrow(ForbiddenException);
+    await expect(
+      service.chat({
+        userId: 'u1',
+        request: { clientRequestId: '00000000-0000-4000-8000-000000000001', message: 'hello' },
+      }),
+    ).rejects.toThrow(ForbiddenException);
     expect(quota.assertSubscribedChatWithinQuota).not.toHaveBeenCalled();
     expect(usage.record).not.toHaveBeenCalled();
   });
@@ -58,7 +63,12 @@ describe('AssistantService', () => {
       new ForbiddenException('Monthly message quota exceeded.'),
     );
 
-    await expect(service.chat({ userId: 'u1', message: 'hello' })).rejects.toThrow(ForbiddenException);
+    await expect(
+      service.chat({
+        userId: 'u1',
+        request: { clientRequestId: '00000000-0000-4000-8000-000000000001', message: 'hello' },
+      }),
+    ).rejects.toThrow(ForbiddenException);
     expect(usage.record).not.toHaveBeenCalled();
   });
 
@@ -71,9 +81,14 @@ describe('AssistantService', () => {
     quota.assertSubscribedChatWithinQuota.mockResolvedValue(undefined);
     usage.record.mockResolvedValue(undefined);
 
-    const out = await service.chat({ userId: 'u1', message: 'buy milk' });
+    const out = await service.chat({
+      userId: 'u1',
+      request: { clientRequestId: '00000000-0000-4000-8000-000000000003', message: 'buy milk' },
+    });
 
     expect(out.mode).toBe('mock');
+    expect(out.clientRequestId).toBe('00000000-0000-4000-8000-000000000003');
+    expect(out.proposals[0].type).toBe('create_task');
     expect(usage.record).toHaveBeenCalledWith({
       userId: 'u1',
       feature: 'chat',

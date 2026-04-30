@@ -65,31 +65,7 @@ export const chatMessageSchema = z.object({
 });
 export type ChatMessage = z.infer<typeof chatMessageSchema>;
 
-export const assistantActionSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('create_task'),
-    payload: taskSchema.pick({
-      title: true,
-      description: true,
-      priority: true,
-      dueAt: true,
-      goalId: true,
-    }),
-  }),
-  z.object({
-    type: z.literal('create_note'),
-    payload: noteSchema.pick({ title: true, body: true }),
-  }),
-  z.object({
-    type: z.literal('schedule_reminder'),
-    payload: reminderSchema.pick({ title: true, remindAt: true, taskId: true, noteId: true }),
-  }),
-  z.object({
-    type: z.literal('create_goal'),
-    payload: goalSchema.pick({ title: true, motivation: true, targetDate: true }),
-  }),
-]);
-export type AssistantAction = z.infer<typeof assistantActionSchema>;
+export * from './assistant-contracts.js';
 
 export const subscriptionPlanSchema = z.object({
   id: z.enum(['free', 'plus', 'pro']),

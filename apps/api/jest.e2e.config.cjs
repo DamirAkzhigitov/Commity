@@ -7,6 +7,7 @@ module.exports = {
   setupFiles: ['<rootDir>/test/load-env.ts'],
   moduleNameMapper: {
     '^@personal-assistant/shared$': '<rootDir>/../../packages/shared/src/index.ts',
+    '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   testMatch: ['**/*.e2e-spec.ts'],
   transform: {
