@@ -1,5 +1,8 @@
 import { randomUUID } from 'crypto';
-import type { AssistantActionProposal } from '@personal-assistant/shared';
+import {
+  assistantActionProposalSchema,
+  type AssistantActionProposal,
+} from '@personal-assistant/shared';
 
 /** Patterns for greetings, acknowledgements, and light small talk — no proposals. */
 function isLikelyConversationalOnly(trimmed: string): boolean {
@@ -97,6 +100,11 @@ const SCHEDULE_REMINDERISH =
   /\bschedule\b.*\b(remind|reminder)\b|\b(remind|reminder)\b.*\bschedule\b|\bschedule\s+(a|an)\s+reminder\b/i;
 
 export function planAssistantActions(message: string): AssistantActionProposal[] {
+  const proposals = planAssistantActionsRaw(message);
+  return validateProposals(proposals);
+}
+
+function planAssistantActionsRaw(message: string): AssistantActionProposal[] {
   const trimmed = message.trim();
   if (trimmed.length === 0) return [];
 
@@ -202,7 +210,7 @@ export function planAssistantActions(message: string): AssistantActionProposal[]
         type: 'create_task',
         confirmationTier: 'requires_confirmation',
         payload: {
-          title: trimmed,
+          title: trimmed.slice(0, 512),
           priority: 'medium',
         },
       },
@@ -223,9 +231,19 @@ export function planAssistantActions(message: string): AssistantActionProposal[]
       type: 'create_task',
       confirmationTier: 'requires_confirmation',
       payload: {
-        title: trimmed,
+        title: trimmed.slice(0, 512),
         priority: 'medium',
       },
     },
   ];
+}
+
+/**
+ * Defense-in-depth: re-validate planner output against the shared contract
+ * schema before it leaves the server. This catches any future drift between
+ * planner code and `assistantActionProposalSchema` server-side instead of
+ * letting malformed proposals leak to clients that re-validate.
+ */
+function validateProposals(proposals: AssistantActionProposal[]): AssistantActionProposal[] {
+  return assistantActionProposalSchema.array().parse(proposals);
 }

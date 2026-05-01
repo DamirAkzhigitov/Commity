@@ -1,3 +1,4 @@
+import { assistantActionProposalSchema } from '@personal-assistant/shared';
 import { planAssistantActions } from '../src/assistant/plan-assistant-actions';
 
 describe('planAssistantActions', () => {
@@ -55,5 +56,32 @@ describe('planAssistantActions', () => {
     expect(out[0]).toMatchObject({
       payload: { kind: 'task', localId: 'local_item_pending_selection' },
     });
+  });
+
+  it('caps create_task title at 512 chars on the explicit-task branch', () => {
+    const longBody = 'a'.repeat(2000);
+    const out = planAssistantActions(`Please create a task to ${longBody}`);
+    expect(out).toHaveLength(1);
+    expect(out[0].type).toBe('create_task');
+    if (out[0].type !== 'create_task') return;
+    expect(out[0].payload.title.length).toBe(512);
+  });
+
+  it('caps create_task title at 512 chars on the fallback branch', () => {
+    const huge = 'b'.repeat(1500);
+    const out = planAssistantActions(huge);
+    expect(out).toHaveLength(1);
+    expect(out[0].type).toBe('create_task');
+    if (out[0].type !== 'create_task') return;
+    expect(out[0].payload.title.length).toBe(512);
+  });
+
+  it('produces proposals that re-validate against the shared schema for long inputs', () => {
+    const longBody = 'c'.repeat(32_000);
+    const out = planAssistantActions(longBody);
+    expect(out.length).toBeGreaterThan(0);
+    for (const proposal of out) {
+      expect(() => assistantActionProposalSchema.parse(proposal)).not.toThrow();
+    }
   });
 });
