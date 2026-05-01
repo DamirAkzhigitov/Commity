@@ -4,15 +4,20 @@ import { z } from 'zod';
 export const confirmationTierSchema = z.enum(['draft', 'requires_confirmation']);
 export type ConfirmationTier = z.infer<typeof confirmationTierSchema>;
 
+/** Context rows included in outbound assistant packets (`POST /assistant/chat`). */
 export const contextItemKindSchema = z.enum([
   'task',
-  'note',
+  'subitem',
+  'document',
   'reminder',
-  'goal',
   'memory',
   'chat_excerpt',
 ]);
 export type ContextItemKind = z.infer<typeof contextItemKindSchema>;
+
+/** Kinds addressable by structured update/delete proposals. */
+export const proposalTargetKindSchema = z.enum(['task', 'subitem', 'document', 'reminder']);
+export type ProposalTargetKind = z.infer<typeof proposalTargetKindSchema>;
 
 /** Per-item privacy metadata: local_only items must not be sent to the model (includeInAi false). */
 export const contextItemPrivacySchema = z.object({
@@ -98,17 +103,32 @@ export const noopProposalPayloadSchema = z
   })
   .strict();
 
+/** Nested draft Subitems attached to a new Task proposal. */
+export const createTaskSubitemDraftSchema = z.object({
+  title: z.string().min(1).max(512),
+});
+export type CreateTaskSubitemDraft = z.infer<typeof createTaskSubitemDraftSchema>;
+
+/** Task-scoped document references carried on create_task (existing local doc id or inline draft). */
+export const createTaskDocumentRefSchema = z.object({
+  title: z.string().min(1).max(512),
+  documentType: z.string().max(64).optional(),
+  localId: z.string().min(1).max(128).optional(),
+});
+export type CreateTaskDocumentRef = z.infer<typeof createTaskDocumentRefSchema>;
+
 export const createTaskProposalPayloadSchema = z.object({
   title: z.string().min(1).max(512),
   description: z.string().max(10000).optional(),
   priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
   dueAt: z.string().datetime().optional(),
-  goalId: z.string().max(128).optional(),
+  subitems: z.array(createTaskSubitemDraftSchema).max(50).optional(),
+  documents: z.array(createTaskDocumentRefSchema).max(20).optional(),
 });
 
-export const createNoteProposalPayloadSchema = z.object({
+export const createSubitemProposalPayloadSchema = z.object({
+  taskLocalId: z.string().min(1).max(128),
   title: z.string().min(1).max(512),
-  body: z.string().min(1).max(32000),
 });
 
 /** Reminder / scheduled item: non-empty title, optional body text, validated schedule instant. */
@@ -116,23 +136,27 @@ export const scheduleReminderProposalPayloadSchema = z.object({
   title: z.string().min(1).max(512),
   text: z.string().min(1).max(2000).optional(),
   remindAt: z.string().datetime(),
+  linkedTaskLocalId: z.string().min(1).max(128).optional(),
+  linkedSubitemLocalId: z.string().min(1).max(128).optional(),
 });
 
-export const createGoalProposalPayloadSchema = z.object({
+export const upsertDocumentProposalPayloadSchema = z.object({
+  taskLocalId: z.string().min(1).max(128),
+  localId: z.string().min(1).max(128).optional(),
   title: z.string().min(1).max(512),
-  motivation: z.string().max(4000).optional(),
-  targetDate: z.string().datetime().optional(),
+  documentType: z.string().max(64).optional(),
+  bodySnippet: z.string().max(2000).optional(),
 });
 
 export const updateItemProposalPayloadSchema = z.object({
   localId: z.string().min(1).max(128),
-  kind: contextItemKindSchema,
+  kind: proposalTargetKindSchema,
   updates: updateItemPatchSchema,
 });
 
 export const deleteItemProposalPayloadSchema = z.object({
   localId: z.string().min(1).max(128),
-  kind: contextItemKindSchema,
+  kind: proposalTargetKindSchema,
 });
 
 export const assistantActionProposalSchema = z.discriminatedUnion('type', [
@@ -152,10 +176,17 @@ export const assistantActionProposalSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     proposalId: z.string().uuid(),
-    type: z.literal('create_note'),
+    type: z.literal('create_subitem'),
     confirmationTier: confirmationTierSchema,
     confidence: z.number().min(0).max(1).optional(),
-    payload: createNoteProposalPayloadSchema,
+    payload: createSubitemProposalPayloadSchema,
+  }),
+  z.object({
+    proposalId: z.string().uuid(),
+    type: z.literal('upsert_document'),
+    confirmationTier: confirmationTierSchema,
+    confidence: z.number().min(0).max(1).optional(),
+    payload: upsertDocumentProposalPayloadSchema,
   }),
   z.object({
     proposalId: z.string().uuid(),
@@ -163,13 +194,6 @@ export const assistantActionProposalSchema = z.discriminatedUnion('type', [
     confirmationTier: confirmationTierSchema,
     confidence: z.number().min(0).max(1).optional(),
     payload: scheduleReminderProposalPayloadSchema,
-  }),
-  z.object({
-    proposalId: z.string().uuid(),
-    type: z.literal('create_goal'),
-    confirmationTier: confirmationTierSchema,
-    confidence: z.number().min(0).max(1).optional(),
-    payload: createGoalProposalPayloadSchema,
   }),
   z.object({
     proposalId: z.string().uuid(),

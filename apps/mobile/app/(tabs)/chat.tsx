@@ -36,12 +36,12 @@ function proposalSummary(p: AssistantActionProposal): string {
   switch (p.type) {
     case 'create_task':
       return `Task: ${p.payload.title}`;
-    case 'create_note':
-      return `Note: ${p.payload.title}`;
+    case 'create_subitem':
+      return `Subitem under ${p.payload.taskLocalId}: ${p.payload.title}`;
+    case 'upsert_document':
+      return `Document on ${p.payload.taskLocalId}: ${p.payload.title}`;
     case 'schedule_reminder':
       return `Reminder: ${p.payload.title} @ ${p.payload.remindAt}`;
-    case 'create_goal':
-      return `Goal: ${p.payload.title}`;
     case 'update_item':
       return `Update ${p.payload.kind} ${p.payload.localId}`;
     case 'delete_item':
@@ -55,19 +55,22 @@ function proposalDraftSeed(p: AssistantActionProposal): ProposalDraftFields {
   switch (p.type) {
     case 'create_task':
       return {title: p.payload.title, description: p.payload.description ?? ''};
-    case 'create_note':
-      return {title: p.payload.title, body: p.payload.body};
+    case 'create_subitem':
+      return {taskLocalId: p.payload.taskLocalId, title: p.payload.title};
+    case 'upsert_document':
+      return {
+        taskLocalId: p.payload.taskLocalId,
+        title: p.payload.title,
+        documentType: p.payload.documentType ?? '',
+        bodySnippet: p.payload.bodySnippet ?? '',
+      };
     case 'schedule_reminder':
       return {
         title: p.payload.title,
         text: p.payload.text ?? '',
         remindAt: p.payload.remindAt,
-      };
-    case 'create_goal':
-      return {
-        title: p.payload.title,
-        motivation: p.payload.motivation ?? '',
-        targetDate: p.payload.targetDate ?? '',
+        linkedTaskLocalId: p.payload.linkedTaskLocalId ?? '',
+        linkedSubitemLocalId: p.payload.linkedSubitemLocalId ?? '',
       };
     default:
       return {};
@@ -87,7 +90,7 @@ export default function ChatScreen() {
   const [lastClientRequestId, setLastClientRequestId] = useState<string | null>(null);
   const messagesScrollRef = useRef<ScrollView | null>(null);
 
-  const undoHint = useMemo(() => 'Undo removes the last assistant-created task/note/reminder/goal.', []);
+  const undoHint = useMemo(() => 'Undo removes the last assistant-created task, subitem, document, or reminder.', []);
 
   const reloadChatMessages = useCallback(async () => {
     if (!session) return;
@@ -299,9 +302,9 @@ export default function ChatScreen() {
                       </Pressable>
                     ) : null}
                     {(p.type === 'create_task' ||
-                      p.type === 'create_note' ||
-                      p.type === 'schedule_reminder' ||
-                      p.type === 'create_goal') && (
+                      p.type === 'create_subitem' ||
+                      p.type === 'upsert_document' ||
+                      p.type === 'schedule_reminder') && (
                       <Pressable
                         onPress={() => toggleDraft(p.proposalId, p)}
                         style={({pressed}) => [styles.miniSecondary, pressed && styles.buttonPressed]}
@@ -382,21 +385,50 @@ function proposalEditors(
           />
         </View>
       );
-    case 'create_note':
+    case 'create_subitem':
       return (
         <View style={styles.editBox}>
+          <Text style={styles.editLabel}>Parent task local id</Text>
+          <TextInput
+            style={styles.editInput}
+            value={d.taskLocalId ?? ''}
+            onChangeText={(t) => updateDraft(p.proposalId, {taskLocalId: t})}
+          />
           <Text style={styles.editLabel}>Title</Text>
           <TextInput
             style={styles.editInput}
             value={d.title ?? ''}
             onChangeText={(t) => updateDraft(p.proposalId, {title: t})}
           />
-          <Text style={styles.editLabel}>Body</Text>
+        </View>
+      );
+    case 'upsert_document':
+      return (
+        <View style={styles.editBox}>
+          <Text style={styles.editLabel}>Task local id</Text>
+          <TextInput
+            style={styles.editInput}
+            value={d.taskLocalId ?? ''}
+            onChangeText={(t) => updateDraft(p.proposalId, {taskLocalId: t})}
+          />
+          <Text style={styles.editLabel}>Title</Text>
+          <TextInput
+            style={styles.editInput}
+            value={d.title ?? ''}
+            onChangeText={(t) => updateDraft(p.proposalId, {title: t})}
+          />
+          <Text style={styles.editLabel}>Document type</Text>
+          <TextInput
+            style={styles.editInput}
+            value={d.documentType ?? ''}
+            onChangeText={(t) => updateDraft(p.proposalId, {documentType: t})}
+          />
+          <Text style={styles.editLabel}>Snippet</Text>
           <TextInput
             multiline
             style={[styles.editInput, styles.editMultiline]}
-            value={d.body ?? ''}
-            onChangeText={(t) => updateDraft(p.proposalId, {body: t})}
+            value={d.bodySnippet ?? ''}
+            onChangeText={(t) => updateDraft(p.proposalId, {bodySnippet: t})}
           />
         </View>
       );
@@ -421,29 +453,17 @@ function proposalEditors(
             value={d.remindAt ?? ''}
             onChangeText={(t) => updateDraft(p.proposalId, {remindAt: t})}
           />
-        </View>
-      );
-    case 'create_goal':
-      return (
-        <View style={styles.editBox}>
-          <Text style={styles.editLabel}>Title</Text>
+          <Text style={styles.editLabel}>Linked task local id (optional)</Text>
           <TextInput
             style={styles.editInput}
-            value={d.title ?? ''}
-            onChangeText={(t) => updateDraft(p.proposalId, {title: t})}
+            value={d.linkedTaskLocalId ?? ''}
+            onChangeText={(t) => updateDraft(p.proposalId, {linkedTaskLocalId: t})}
           />
-          <Text style={styles.editLabel}>Motivation</Text>
-          <TextInput
-            multiline
-            style={[styles.editInput, styles.editMultiline]}
-            value={d.motivation ?? ''}
-            onChangeText={(t) => updateDraft(p.proposalId, {motivation: t})}
-          />
-          <Text style={styles.editLabel}>Target date (ISO datetime or empty)</Text>
+          <Text style={styles.editLabel}>Linked subitem local id (optional)</Text>
           <TextInput
             style={styles.editInput}
-            value={d.targetDate ?? ''}
-            onChangeText={(t) => updateDraft(p.proposalId, {targetDate: t})}
+            value={d.linkedSubitemLocalId ?? ''}
+            onChangeText={(t) => updateDraft(p.proposalId, {linkedSubitemLocalId: t})}
           />
         </View>
       );

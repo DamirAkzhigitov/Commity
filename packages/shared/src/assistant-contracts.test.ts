@@ -3,10 +3,37 @@ import {
   assistantActionProposalSchema,
   assistantChatRequestSchema,
   assistantContextPacketSchema,
+  assistantContextItemSchema,
   scheduleReminderProposalPayloadSchema,
 } from './assistant-contracts.js';
 
 const validUuid = '11111111-1111-4111-8111-111111111111';
+
+/** Golden-style document matching docs/ai-context-contract.md example shapes. */
+const goldenTaskProposal = {
+  proposalId: validUuid,
+  type: 'create_task' as const,
+  confirmationTier: 'requires_confirmation' as const,
+  confidence: 0.72,
+  payload: {
+    title: 'Renew passport',
+    description: 'Complete and submit the passport renewal form.',
+    priority: 'high' as const,
+    dueAt: '2026-05-15T17:00:00.000Z',
+    subitems: [
+      { title: 'Take passport photo' },
+      { title: 'Fill out renewal form' },
+      { title: 'Mail renewal packet' },
+    ],
+    documents: [
+      {
+        title: 'Passport renewal form',
+        documentType: 'form',
+        localId: 'doc_7f3a',
+      },
+    ],
+  },
+};
 
 describe('assistantChatRequestSchema', () => {
   it('accepts minimal valid request', () => {
@@ -40,7 +67,7 @@ describe('assistantChatRequestSchema', () => {
       privacy: { userConfirmedBroaderContext: false },
       items: [
         {
-          kind: 'note' as const,
+          kind: 'document' as const,
           localId: 'n1',
           includeInAi: false,
           privacy: { sensitivity: 'local_only' as const },
@@ -54,6 +81,35 @@ describe('assistantChatRequestSchema', () => {
       items: [{ ...base.items[0], includeInAi: true }],
     };
     expect(assistantContextPacketSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it('accepts all context item kinds', () => {
+    const kinds = ['task', 'subitem', 'document', 'reminder', 'memory', 'chat_excerpt'] as const;
+    for (const kind of kinds) {
+      const row = {
+        kind,
+        localId: 'x',
+        includeInAi: true,
+      };
+      expect(() => assistantContextItemSchema.parse(row)).not.toThrow();
+    }
+  });
+
+  it('rejects legacy note/goal context kinds', () => {
+    expect(
+      assistantContextItemSchema.safeParse({
+        kind: 'note',
+        localId: 'n',
+        includeInAi: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      assistantContextItemSchema.safeParse({
+        kind: 'goal',
+        localId: 'g',
+        includeInAi: true,
+      }).success,
+    ).toBe(false);
   });
 
   it('rejects estimatedChars above maxTotalChars', () => {
@@ -88,6 +144,13 @@ describe('assistantActionProposalSchema', () => {
     expect(r.success).toBe(false);
   });
 
+  it('accepts create_task with nested Subitems and Documents (golden)', () => {
+    const p = assistantActionProposalSchema.parse(goldenTaskProposal);
+    expect(p.type).toBe('create_task');
+    expect(p.payload.subitems).toHaveLength(3);
+    expect(p.payload.documents).toHaveLength(1);
+  });
+
   it('accepts create_task and delete_item shapes', () => {
     expect(
       assistantActionProposalSchema.safeParse({
@@ -103,7 +166,32 @@ describe('assistantActionProposalSchema', () => {
         proposalId: validUuid,
         type: 'delete_item',
         confirmationTier: 'requires_confirmation',
-        payload: { localId: 'x', kind: 'note' },
+        payload: { localId: 'x', kind: 'document' },
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts create_subitem and upsert_document', () => {
+    expect(
+      assistantActionProposalSchema.safeParse({
+        proposalId: validUuid,
+        type: 'create_subitem',
+        confirmationTier: 'requires_confirmation',
+        payload: { taskLocalId: 'task_1', title: 'Step one' },
+      }).success,
+    ).toBe(true);
+
+    expect(
+      assistantActionProposalSchema.safeParse({
+        proposalId: validUuid,
+        type: 'upsert_document',
+        confirmationTier: 'requires_confirmation',
+        payload: {
+          taskLocalId: 'task_1',
+          title: 'Spec',
+          documentType: 'pdf',
+          bodySnippet: 'See section 2',
+        },
       }).success,
     ).toBe(true);
   });
@@ -118,7 +206,7 @@ describe('assistantActionProposalSchema', () => {
     expect(r.success).toBe(false);
   });
 
-  it('rejects create_task, create_note, create_goal with invalid payloads', () => {
+  it('rejects create_task, create_subitem, upsert_document with invalid payloads', () => {
     expect(
       assistantActionProposalSchema.safeParse({
         proposalId: validUuid,
@@ -131,18 +219,29 @@ describe('assistantActionProposalSchema', () => {
     expect(
       assistantActionProposalSchema.safeParse({
         proposalId: validUuid,
-        type: 'create_note',
+        type: 'create_subitem',
         confirmationTier: 'requires_confirmation',
-        payload: { title: 'T', body: '' },
+        payload: { taskLocalId: '', title: 'x' },
       }).success,
     ).toBe(false);
 
     expect(
       assistantActionProposalSchema.safeParse({
         proposalId: validUuid,
-        type: 'create_goal',
+        type: 'upsert_document',
         confirmationTier: 'requires_confirmation',
-        payload: { title: '' },
+        payload: { taskLocalId: 't', title: '' },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects update_item with unsupported kinds', () => {
+    expect(
+      assistantActionProposalSchema.safeParse({
+        proposalId: validUuid,
+        type: 'update_item',
+        confirmationTier: 'requires_confirmation',
+        payload: { localId: 't1', kind: 'memory', updates: { titleOrLabel: 'x' } },
       }).success,
     ).toBe(false);
   });
@@ -166,6 +265,17 @@ describe('scheduleReminderProposalPayloadSchema', () => {
         remindAt: '2026-05-01T15:00:00.000Z',
       }).success,
     ).toBe(true);
+  });
+
+  it('accepts optional task/subitem links', () => {
+    const out = scheduleReminderProposalPayloadSchema.parse({
+      title: 'Follow up',
+      remindAt: '2026-05-01T15:00:00.000Z',
+      linkedTaskLocalId: 'task_a',
+      linkedSubitemLocalId: 'sub_b',
+    });
+    expect(out.linkedTaskLocalId).toBe('task_a');
+    expect(out.linkedSubitemLocalId).toBe('sub_b');
   });
 
   it('rejects missing title', () => {

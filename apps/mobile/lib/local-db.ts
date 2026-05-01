@@ -32,9 +32,36 @@ CREATE TABLE IF NOT EXISTS reminders (
   title_cipher TEXT NOT NULL,
   text_cipher TEXT,
   remind_at TEXT NOT NULL,
+  linked_task_id TEXT,
+  linked_subitem_id TEXT,
   local_only INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS subitems (
+  id TEXT PRIMARY KEY NOT NULL,
+  task_id TEXT NOT NULL,
+  title_cipher TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'todo',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  local_only INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS documents (
+  id TEXT PRIMARY KEY NOT NULL,
+  task_id TEXT NOT NULL,
+  title_cipher TEXT NOT NULL,
+  document_type TEXT,
+  snippet_cipher TEXT,
+  ref_uri_cipher TEXT,
+  local_only INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS goals (
@@ -82,7 +109,20 @@ CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reminders_updated ON reminders(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_goals_updated ON goals(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_created ON chat_messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_subitems_task ON subitems(task_id);
+CREATE INDEX IF NOT EXISTS idx_documents_task ON documents(task_id);
 `;
+
+async function migrateRemindersLinkedColumns(db: SQLiteDatabase): Promise<void> {
+  const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(reminders)');
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has('linked_task_id')) {
+    await db.execAsync('ALTER TABLE reminders ADD COLUMN linked_task_id TEXT');
+  }
+  if (!names.has('linked_subitem_id')) {
+    await db.execAsync('ALTER TABLE reminders ADD COLUMN linked_subitem_id TEXT');
+  }
+}
 
 let dbSingleton: Promise<SQLiteDatabase> | null = null;
 
@@ -90,7 +130,9 @@ export async function getLocalDatabase(): Promise<SQLiteDatabase> {
   if (!dbSingleton) {
     dbSingleton = (async () => {
       const db = await openDatabaseAsync('pa_assistant_local.db');
+      await db.execAsync('PRAGMA foreign_keys = ON');
       await db.execAsync(DDL);
+      await migrateRemindersLinkedColumns(db);
       return db;
     })();
   }
@@ -227,18 +269,78 @@ export async function insertReminderRow(
     titleCipher: string;
     textCipher: string | null;
     remindAt: string;
+    linkedTaskId?: string | null;
+    linkedSubitemId?: string | null;
     localOnly: number;
     createdAt: string;
     updatedAt: string;
   },
 ): Promise<void> {
   await db.runAsync(
-    `INSERT INTO reminders (id, title_cipher, text_cipher, remind_at, local_only, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO reminders (id, title_cipher, text_cipher, remind_at, linked_task_id, linked_subitem_id, local_only, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     row.id,
     row.titleCipher,
     row.textCipher,
     row.remindAt,
+    row.linkedTaskId ?? null,
+    row.linkedSubitemId ?? null,
+    row.localOnly,
+    row.createdAt,
+    row.updatedAt,
+  );
+}
+
+export async function insertSubitemRow(
+  db: SQLiteDatabase,
+  row: {
+    id: string;
+    taskId: string;
+    titleCipher: string;
+    status: string;
+    sortOrder: number;
+    localOnly: number;
+    createdAt: string;
+    updatedAt: string;
+  },
+): Promise<void> {
+  await db.runAsync(
+    `INSERT INTO subitems (id, task_id, title_cipher, status, sort_order, local_only, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    row.id,
+    row.taskId,
+    row.titleCipher,
+    row.status,
+    row.sortOrder,
+    row.localOnly,
+    row.createdAt,
+    row.updatedAt,
+  );
+}
+
+export async function insertDocumentRow(
+  db: SQLiteDatabase,
+  row: {
+    id: string;
+    taskId: string;
+    titleCipher: string;
+    documentType: string | null;
+    snippetCipher: string | null;
+    refUriCipher: string | null;
+    localOnly: number;
+    createdAt: string;
+    updatedAt: string;
+  },
+): Promise<void> {
+  await db.runAsync(
+    `INSERT INTO documents (id, task_id, title_cipher, document_type, snippet_cipher, ref_uri_cipher, local_only, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    row.id,
+    row.taskId,
+    row.titleCipher,
+    row.documentType,
+    row.snippetCipher,
+    row.refUriCipher,
     row.localOnly,
     row.createdAt,
     row.updatedAt,
@@ -321,8 +423,20 @@ export async function appendActionHistory(
 }
 
 export async function deleteTask(db: SQLiteDatabase, id: string): Promise<void> {
+  await db.runAsync(`UPDATE reminders SET linked_task_id = NULL WHERE linked_task_id = ?`, id);
   await db.runAsync(`DELETE FROM tasks WHERE id = ?`, id);
   await db.runAsync(`DELETE FROM item_source_meta WHERE item_kind = 'task' AND item_local_id = ?`, id);
+}
+
+export async function deleteSubitem(db: SQLiteDatabase, id: string): Promise<void> {
+  await db.runAsync(`UPDATE reminders SET linked_subitem_id = NULL WHERE linked_subitem_id = ?`, id);
+  await db.runAsync(`DELETE FROM subitems WHERE id = ?`, id);
+  await db.runAsync(`DELETE FROM item_source_meta WHERE item_kind = 'subitem' AND item_local_id = ?`, id);
+}
+
+export async function deleteDocument(db: SQLiteDatabase, id: string): Promise<void> {
+  await db.runAsync(`DELETE FROM documents WHERE id = ?`, id);
+  await db.runAsync(`DELETE FROM item_source_meta WHERE item_kind = 'document' AND item_local_id = ?`, id);
 }
 
 export async function deleteNote(db: SQLiteDatabase, id: string): Promise<void> {
@@ -466,6 +580,58 @@ export async function updateGoalEncrypted(
   );
 }
 
+export async function updateSubitemEncrypted(
+  db: SQLiteDatabase,
+  localId: string,
+  patch: Patch,
+  updatedAt: string,
+): Promise<void> {
+  const row = await db.getFirstAsync<{ title_cipher: string; status: string }>(
+    `SELECT title_cipher, status FROM subitems WHERE id = ?`,
+    localId,
+  );
+  if (!row) return;
+  const title =
+    patch.titleOrLabel !== undefined
+      ? patch.titleOrLabel
+      : ((await decryptLocalContent(row.title_cipher)) ?? '');
+  await db.runAsync(
+    `UPDATE subitems SET title_cipher = ?, status = COALESCE(?, status), updated_at = ? WHERE id = ?`,
+    await encryptLocalContent(title),
+    patch.status ?? null,
+    updatedAt,
+    localId,
+  );
+}
+
+export async function updateDocumentEncrypted(
+  db: SQLiteDatabase,
+  localId: string,
+  patch: Patch,
+  updatedAt: string,
+): Promise<void> {
+  const row = await db.getFirstAsync<{ title_cipher: string; snippet_cipher: string | null }>(
+    `SELECT title_cipher, snippet_cipher FROM documents WHERE id = ?`,
+    localId,
+  );
+  if (!row) return;
+  const title =
+    patch.titleOrLabel !== undefined
+      ? patch.titleOrLabel
+      : ((await decryptLocalContent(row.title_cipher)) ?? '');
+  const snippet =
+    patch.bodySnippet !== undefined
+      ? patch.bodySnippet
+      : ((await decryptLocalContent(row.snippet_cipher)) ?? '');
+  await db.runAsync(
+    `UPDATE documents SET title_cipher = ?, snippet_cipher = ?, updated_at = ? WHERE id = ?`,
+    await encryptLocalContent(title),
+    snippet ? await encryptLocalContent(snippet) : null,
+    updatedAt,
+    localId,
+  );
+}
+
 export async function setEntityLocalOnly(
   db: SQLiteDatabase,
   kind: 'task' | 'note' | 'reminder' | 'goal',
@@ -500,6 +666,8 @@ export async function undoLastAppliedCreate(db: SQLiteDatabase): Promise<boolean
   else if (row.entity_kind === 'note') await deleteNote(db, row.entity_id);
   else if (row.entity_kind === 'reminder') await deleteReminder(db, row.entity_id);
   else if (row.entity_kind === 'goal') await deleteGoal(db, row.entity_id);
+  else if (row.entity_kind === 'subitem') await deleteSubitem(db, row.entity_id);
+  else if (row.entity_kind === 'document') await deleteDocument(db, row.entity_id);
 
   await db.runAsync(`UPDATE action_history SET undone_at = ? WHERE id = ?`, new Date().toISOString(), row.id);
   return true;
@@ -581,6 +749,8 @@ export type ReminderListRow = {
   title: string;
   text: string | null;
   remindAt: string;
+  linkedTaskId: string | null;
+  linkedSubitemId: string | null;
   localOnly: boolean;
   updatedAt: string;
 };
@@ -591,10 +761,12 @@ export async function listRemindersDecrypted(db: SQLiteDatabase): Promise<Remind
     title_cipher: string;
     text_cipher: string | null;
     remind_at: string;
+    linked_task_id: string | null;
+    linked_subitem_id: string | null;
     local_only: number;
     updated_at: string;
   }>(
-    `SELECT id, title_cipher, text_cipher, remind_at, local_only, updated_at FROM reminders ORDER BY remind_at ASC`,
+    `SELECT id, title_cipher, text_cipher, remind_at, linked_task_id, linked_subitem_id, local_only, updated_at FROM reminders ORDER BY remind_at ASC`,
   );
   const out: ReminderListRow[] = [];
   for (const r of rows) {
@@ -603,6 +775,8 @@ export async function listRemindersDecrypted(db: SQLiteDatabase): Promise<Remind
       title: (await decryptLocalContent(r.title_cipher)) ?? '',
       text: await decryptLocalContent(r.text_cipher),
       remindAt: r.remind_at,
+      linkedTaskId: r.linked_task_id,
+      linkedSubitemId: r.linked_subitem_id,
       localOnly: r.local_only !== 0,
       updatedAt: r.updated_at,
     });
@@ -650,15 +824,34 @@ export async function listGoalsDecrypted(db: SQLiteDatabase): Promise<GoalListRo
 /** Rows for outbound assistant context with privacy filtering applied later in context-packet.ts */
 export async function loadLocalContextRows(db: SQLiteDatabase): Promise<LocalContextRow[]> {
   const tasks = await listTasksDecrypted(db);
-  const notes = await listNotesDecrypted(db);
+  const subRows = await db.getAllAsync<{
+    id: string;
+    task_id: string;
+    title_cipher: string;
+    status: string;
+    local_only: number;
+    updated_at: string;
+  }>(
+    `SELECT id, task_id, title_cipher, status, local_only, updated_at FROM subitems ORDER BY updated_at DESC`,
+  );
+  const docRows = await db.getAllAsync<{
+    id: string;
+    task_id: string;
+    title_cipher: string;
+    document_type: string | null;
+    snippet_cipher: string | null;
+    local_only: number;
+    updated_at: string;
+  }>(
+    `SELECT id, task_id, title_cipher, document_type, snippet_cipher, local_only, updated_at FROM documents ORDER BY updated_at DESC`,
+  );
   const reminders = await listRemindersDecrypted(db);
-  const goals = await listGoalsDecrypted(db);
 
   const stamp = new Map<string, string>();
   for (const t of tasks) stamp.set(`task:${t.id}`, t.updatedAt);
-  for (const n of notes) stamp.set(`note:${n.id}`, n.updatedAt);
+  for (const s of subRows) stamp.set(`subitem:${s.id}`, s.updated_at);
+  for (const d of docRows) stamp.set(`document:${d.id}`, d.updated_at);
   for (const r of reminders) stamp.set(`reminder:${r.id}`, r.updatedAt);
-  for (const g of goals) stamp.set(`goal:${g.id}`, g.updatedAt);
 
   const rows: LocalContextRow[] = [];
 
@@ -671,31 +864,42 @@ export async function loadLocalContextRows(db: SQLiteDatabase): Promise<LocalCon
       localOnly: t.localOnly,
     });
   }
-  for (const n of notes) {
+  for (const s of subRows) {
+    const title = (await decryptLocalContent(s.title_cipher)) ?? '';
     rows.push({
-      kind: 'note',
-      localId: n.id,
-      title: n.title,
-      bodySnippet: n.body.slice(0, 500),
-      localOnly: n.localOnly,
+      kind: 'subitem',
+      localId: s.id,
+      title,
+      bodySnippet: `status:${s.status}`,
+      localOnly: s.local_only !== 0,
+      metadata: { taskId: s.task_id },
+    });
+  }
+  for (const d of docRows) {
+    const title = (await decryptLocalContent(d.title_cipher)) ?? '';
+    const snippet = await decryptLocalContent(d.snippet_cipher);
+    const metadata: Record<string, string> = { taskId: d.task_id };
+    if (d.document_type) metadata.documentType = d.document_type;
+    rows.push({
+      kind: 'document',
+      localId: d.id,
+      title,
+      bodySnippet: snippet ?? undefined,
+      localOnly: d.local_only !== 0,
+      metadata,
     });
   }
   for (const r of reminders) {
+    const metadata: Record<string, string> = {};
+    if (r.linkedTaskId) metadata.linkedTaskId = r.linkedTaskId;
+    if (r.linkedSubitemId) metadata.linkedSubitemId = r.linkedSubitemId;
     rows.push({
       kind: 'reminder',
       localId: r.id,
       title: r.title,
       bodySnippet: r.text ?? undefined,
       localOnly: r.localOnly,
-    });
-  }
-  for (const g of goals) {
-    rows.push({
-      kind: 'goal',
-      localId: g.id,
-      title: g.title,
-      bodySnippet: g.motivation ?? undefined,
-      localOnly: g.localOnly,
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     });
   }
 

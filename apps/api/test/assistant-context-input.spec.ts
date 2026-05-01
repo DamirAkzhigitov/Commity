@@ -61,31 +61,31 @@ describe('assistant-context-input', () => {
   it('deterministic ordering by kind then localId', () => {
     const s = formatPrivacyFilteredContextForModel(
       pack([
-        { kind: 'note', localId: 'n2', titleOrLabel: 'B', includeInAi: true },
-        { kind: 'note', localId: 'n1', titleOrLabel: 'A', includeInAi: true },
+        { kind: 'document', localId: 'd2', titleOrLabel: 'B', includeInAi: true },
+        { kind: 'document', localId: 'd1', titleOrLabel: 'A', includeInAi: true },
         { kind: 'task', localId: 'z', titleOrLabel: 't', includeInAi: true },
       ]),
     );
-    const note1 = s.indexOf('localId=n1');
-    const note2 = s.indexOf('localId=n2');
+    const doc1 = s.indexOf('localId=d1');
+    const doc2 = s.indexOf('localId=d2');
     const taskIdx = s.indexOf('kind=task');
     expect(taskIdx).toBeGreaterThanOrEqual(0);
-    expect(note1).toBeGreaterThanOrEqual(0);
-    expect(note2).toBeGreaterThanOrEqual(0);
-    expect(note1).toBeLessThan(note2);
-    expect(note2).toBeLessThan(taskIdx);
+    expect(doc1).toBeGreaterThanOrEqual(0);
+    expect(doc2).toBeGreaterThanOrEqual(0);
+    expect(doc1).toBeLessThan(doc2);
+    expect(doc2).toBeLessThan(taskIdx);
   });
 
   it('prepends clipped conversation_summary when budget allows', () => {
     const s = formatPrivacyFilteredContextForModel(
       pack(
-        [{ kind: 'goal', localId: 'g1', titleOrLabel: 'Run', includeInAi: true }],
+        [{ kind: 'reminder', localId: 'r1', titleOrLabel: 'Run', includeInAi: true }],
         { conversationSummary: 'Earlier we discussed errands.' },
       ),
     );
     expect(s.startsWith('conversation_summary:')).toBe(true);
     expect(s).toContain('Earlier we discussed errands');
-    expect(s).toContain('kind=goal');
+    expect(s).toContain('kind=reminder');
   });
 
   it('composeUser wraps message with context headings', () => {

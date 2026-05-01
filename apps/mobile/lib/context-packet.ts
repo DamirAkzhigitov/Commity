@@ -5,11 +5,13 @@ import type {
 
 /** Decrypted rows used only on-device before building an outbound context packet. */
 export type LocalContextRow = {
-  kind: 'task' | 'note' | 'reminder' | 'goal';
+  kind: 'task' | 'subitem' | 'document' | 'reminder' | 'memory' | 'chat_excerpt';
   localId: string;
   title: string;
   bodySnippet?: string;
   localOnly: boolean;
+  /** Optional key/value metadata (e.g. taskId for hierarchical context). */
+  metadata?: Record<string, string>;
 };
 
 const DEFAULT_MAX_CHARS = 12000;
@@ -23,6 +25,11 @@ function estimateItemChars(it: AssistantContextItem): number {
   let n = it.localId.length + it.kind.length;
   if (it.titleOrLabel) n += it.titleOrLabel.length;
   if (it.bodySnippet) n += it.bodySnippet.length;
+  if (it.metadata) {
+    for (const [k, v] of Object.entries(it.metadata)) {
+      n += k.length + v.length;
+    }
+  }
   return n;
 }
 
@@ -63,6 +70,7 @@ export function buildAssistantContextPacketFromRows(
       localId: r.localId,
       titleOrLabel: clip(r.title, 512),
       bodySnippet: r.bodySnippet ? clip(r.bodySnippet, 2000) : undefined,
+      metadata: r.metadata,
       includeInAi,
       privacy,
     };

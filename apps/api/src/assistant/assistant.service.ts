@@ -151,10 +151,12 @@ export class AssistantService {
       return [
         {
           proposalId: id(),
-          type: 'create_goal',
+          type: 'create_task',
           confirmationTier: 'requires_confirmation',
           payload: {
             title: message.slice(0, 512),
+            description: 'Outcome-oriented task (formerly framed as a goal).',
+            priority: 'high',
           },
         },
       ];
@@ -179,11 +181,26 @@ export class AssistantService {
       return [
         {
           proposalId: id(),
-          type: 'create_note',
+          type: 'upsert_document',
           confirmationTier: 'requires_confirmation',
           payload: {
-            title: 'New note',
-            body: message,
+            taskLocalId: 'local_task_pending_selection',
+            title: 'Captured note',
+            bodySnippet: message.slice(0, 2000),
+          },
+        },
+      ];
+    }
+
+    if (normalized.includes('subtask') || normalized.includes('sub-item')) {
+      return [
+        {
+          proposalId: id(),
+          type: 'create_subitem',
+          confirmationTier: 'requires_confirmation',
+          payload: {
+            taskLocalId: 'local_task_pending_selection',
+            title: message.slice(0, 512),
           },
         },
       ];

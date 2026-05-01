@@ -43,7 +43,7 @@ describe('buildAssistantContextPacketFromRows', () => {
     const packet = buildAssistantContextPacketFromRows(
       [
         {
-          kind: 'note',
+          kind: 'document',
           localId: 'n1',
           title: 'Private',
           bodySnippet: 'details',

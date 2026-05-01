@@ -4,18 +4,18 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { encryptLocalContent } from './local-content-crypto';
 import {
   appendActionHistory,
-  deleteGoal,
-  deleteNote,
+  deleteDocument,
   deleteReminder,
+  deleteSubitem,
   deleteTask,
-  insertGoalRow,
+  insertDocumentRow,
   insertItemSourceMeta,
-  insertNoteRow,
   insertReminderRow,
+  insertSubitemRow,
   insertTaskRow,
-  updateGoalEncrypted,
-  updateNoteEncrypted,
+  updateDocumentEncrypted,
   updateReminderEncrypted,
+  updateSubitemEncrypted,
   updateTaskEncrypted,
 } from './local-db';
 
@@ -47,23 +47,65 @@ export async function applyAssistantProposal(
       return {};
 
     case 'create_task': {
-      const id = randomUUID();
-      const { title, description, priority, dueAt, goalId } = proposal.payload;
+      const taskId = randomUUID();
+      const { title, description, priority, dueAt, subitems, documents } = proposal.payload;
       await insertTaskRow(db, {
-        id,
+        id: taskId,
         titleCipher: await encryptLocalContent(title),
         descriptionCipher: description ? await encryptLocalContent(description) : null,
         status: 'todo',
         priority: priority ?? 'medium',
         dueAt: dueAt ?? null,
-        goalId: goalId ?? null,
+        goalId: null,
         localOnly: 0,
         createdAt: appliedAt,
         updatedAt: appliedAt,
       });
+
+      let sortOrder = 0;
+      for (const si of subitems ?? []) {
+        await insertSubitemRow(db, {
+          id: randomUUID(),
+          taskId,
+          titleCipher: await encryptLocalContent(si.title),
+          status: 'todo',
+          sortOrder,
+          localOnly: 0,
+          createdAt: appliedAt,
+          updatedAt: appliedAt,
+        });
+        sortOrder += 1;
+      }
+
+      for (const d of documents ?? []) {
+        if (d.localId) {
+          await db.runAsync(`UPDATE documents SET task_id = ? WHERE id = ?`, taskId, d.localId);
+          if (d.title) {
+            await updateDocumentEncrypted(
+              db,
+              d.localId,
+              { titleOrLabel: d.title },
+              appliedAt,
+            );
+          }
+        } else {
+          await insertDocumentRow(db, {
+            id: randomUUID(),
+            taskId,
+            titleCipher: await encryptLocalContent(d.title),
+            documentType: d.documentType ?? null,
+            snippetCipher: null,
+            refUriCipher: null,
+            localOnly: 0,
+            createdAt: appliedAt,
+            updatedAt: appliedAt,
+          });
+        }
+      }
+
       await insertItemSourceMeta(db, {
         itemKind: 'task',
-        itemLocalId: id,
+        itemLocalId: taskId,
         proposalId: proposal.proposalId,
         clientRequestId: opts.clientRequestId ?? null,
         previewCipher,
@@ -76,24 +118,26 @@ export async function applyAssistantProposal(
         appliedAt,
         undoKind: 'delete_entity',
         entityKind: 'task',
-        entityId: id,
+        entityId: taskId,
       });
-      return { entityKind: 'task', entityId: id };
+      return { entityKind: 'task', entityId: taskId };
     }
 
-    case 'create_note': {
+    case 'create_subitem': {
       const id = randomUUID();
-      const { title, body } = proposal.payload;
-      await insertNoteRow(db, {
+      const { taskLocalId, title } = proposal.payload;
+      await insertSubitemRow(db, {
         id,
+        taskId: taskLocalId,
         titleCipher: await encryptLocalContent(title),
-        bodyCipher: await encryptLocalContent(body),
+        status: 'todo',
+        sortOrder: 0,
         localOnly: 0,
         createdAt: appliedAt,
         updatedAt: appliedAt,
       });
       await insertItemSourceMeta(db, {
-        itemKind: 'note',
+        itemKind: 'subitem',
         itemLocalId: id,
         proposalId: proposal.proposalId,
         clientRequestId: opts.clientRequestId ?? null,
@@ -102,24 +146,76 @@ export async function applyAssistantProposal(
       await appendActionHistory(db, {
         id: randomUUID(),
         proposalId: proposal.proposalId,
-        proposalType: 'create_note',
+        proposalType: 'create_subitem',
         clientRequestId: opts.clientRequestId ?? null,
         appliedAt,
         undoKind: 'delete_entity',
-        entityKind: 'note',
+        entityKind: 'subitem',
         entityId: id,
       });
-      return { entityKind: 'note', entityId: id };
+      return { entityKind: 'subitem', entityId: id };
+    }
+
+    case 'upsert_document': {
+      const { taskLocalId, localId, title, documentType, bodySnippet } = proposal.payload;
+      if (localId) {
+        await db.runAsync(`UPDATE documents SET task_id = ? WHERE id = ?`, taskLocalId, localId);
+        await updateDocumentEncrypted(db, localId, { titleOrLabel: title, bodySnippet }, appliedAt);
+        if (documentType !== undefined) {
+          await db.runAsync(`UPDATE documents SET document_type = ? WHERE id = ?`, documentType ?? null, localId);
+        }
+        await insertItemSourceMeta(db, {
+          itemKind: 'document',
+          itemLocalId: localId,
+          proposalId: proposal.proposalId,
+          clientRequestId: opts.clientRequestId ?? null,
+          previewCipher,
+        });
+        return { entityKind: 'document', entityId: localId };
+      }
+
+      const id = randomUUID();
+      await insertDocumentRow(db, {
+        id,
+        taskId: taskLocalId,
+        titleCipher: await encryptLocalContent(title),
+        documentType: documentType ?? null,
+        snippetCipher: bodySnippet ? await encryptLocalContent(bodySnippet) : null,
+        refUriCipher: null,
+        localOnly: 0,
+        createdAt: appliedAt,
+        updatedAt: appliedAt,
+      });
+      await insertItemSourceMeta(db, {
+        itemKind: 'document',
+        itemLocalId: id,
+        proposalId: proposal.proposalId,
+        clientRequestId: opts.clientRequestId ?? null,
+        previewCipher,
+      });
+      await appendActionHistory(db, {
+        id: randomUUID(),
+        proposalId: proposal.proposalId,
+        proposalType: 'upsert_document',
+        clientRequestId: opts.clientRequestId ?? null,
+        appliedAt,
+        undoKind: 'delete_entity',
+        entityKind: 'document',
+        entityId: id,
+      });
+      return { entityKind: 'document', entityId: id };
     }
 
     case 'schedule_reminder': {
       const id = randomUUID();
-      const { title, text, remindAt } = proposal.payload;
+      const { title, text, remindAt, linkedTaskLocalId, linkedSubitemLocalId } = proposal.payload;
       await insertReminderRow(db, {
         id,
         titleCipher: await encryptLocalContent(title),
         textCipher: text ? await encryptLocalContent(text) : null,
         remindAt,
+        linkedTaskId: linkedTaskLocalId ?? null,
+        linkedSubitemId: linkedSubitemLocalId ?? null,
         localOnly: 0,
         createdAt: appliedAt,
         updatedAt: appliedAt,
@@ -144,50 +240,17 @@ export async function applyAssistantProposal(
       return { entityKind: 'reminder', entityId: id };
     }
 
-    case 'create_goal': {
-      const id = randomUUID();
-      const { title, motivation, targetDate } = proposal.payload;
-      await insertGoalRow(db, {
-        id,
-        titleCipher: await encryptLocalContent(title),
-        motivationCipher: motivation ? await encryptLocalContent(motivation) : null,
-        targetDate: targetDate ?? null,
-        active: 1,
-        localOnly: 0,
-        createdAt: appliedAt,
-        updatedAt: appliedAt,
-      });
-      await insertItemSourceMeta(db, {
-        itemKind: 'goal',
-        itemLocalId: id,
-        proposalId: proposal.proposalId,
-        clientRequestId: opts.clientRequestId ?? null,
-        previewCipher,
-      });
-      await appendActionHistory(db, {
-        id: randomUUID(),
-        proposalId: proposal.proposalId,
-        proposalType: 'create_goal',
-        clientRequestId: opts.clientRequestId ?? null,
-        appliedAt,
-        undoKind: 'delete_entity',
-        entityKind: 'goal',
-        entityId: id,
-      });
-      return { entityKind: 'goal', entityId: id };
-    }
-
     case 'update_item': {
       const { localId, kind, updates } = proposal.payload;
       const updatedAt = appliedAt;
       if (kind === 'task') {
         await updateTaskEncrypted(db, localId, updates, updatedAt);
-      } else if (kind === 'note') {
-        await updateNoteEncrypted(db, localId, updates, updatedAt);
       } else if (kind === 'reminder') {
         await updateReminderEncrypted(db, localId, updates, updatedAt);
-      } else if (kind === 'goal') {
-        await updateGoalEncrypted(db, localId, updates, updatedAt);
+      } else if (kind === 'subitem') {
+        await updateSubitemEncrypted(db, localId, updates, updatedAt);
+      } else if (kind === 'document') {
+        await updateDocumentEncrypted(db, localId, updates, updatedAt);
       }
       await insertItemSourceMeta(db, {
         itemKind: kind,
@@ -202,9 +265,9 @@ export async function applyAssistantProposal(
     case 'delete_item': {
       const { localId, kind } = proposal.payload;
       if (kind === 'task') await deleteTask(db, localId);
-      else if (kind === 'note') await deleteNote(db, localId);
       else if (kind === 'reminder') await deleteReminder(db, localId);
-      else if (kind === 'goal') await deleteGoal(db, localId);
+      else if (kind === 'subitem') await deleteSubitem(db, localId);
+      else if (kind === 'document') await deleteDocument(db, localId);
       await insertItemSourceMeta(db, {
         itemKind: kind,
         itemLocalId: localId,

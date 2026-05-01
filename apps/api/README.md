@@ -5,7 +5,8 @@
 1. Start Postgres (from repo root). The Compose file uses a `pgvector` image because the schema includes `vector` columns.
 
    ```bash
-   docker compose up -d
+   
+   
    ```
 
    If a migration previously failed (e.g. `type "vector" does not exist` on vanilla Postgres), mark it rolled back, then re-deploy after switching images:

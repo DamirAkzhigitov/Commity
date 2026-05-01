@@ -66,7 +66,7 @@ describe('AssistantService OpenAI request body with context', () => {
 
   it('threads includeInAi:true items into responses.create user content', async () => {
     const visible: AssistantContextItem = {
-      kind: 'note',
+      kind: 'document',
       localId: 'n_visible',
       titleOrLabel: 'Meeting notes',
       bodySnippet: 'Discuss roadmap',
@@ -96,7 +96,7 @@ describe('AssistantService OpenAI request body with context', () => {
     expect(userMsg?.content).toContain('Meeting notes');
     expect(userMsg?.content).toContain('What should I do next?');
     expect(userMsg?.content).toContain('localId=n_visible');
-    expect(userMsg?.content).toContain('kind=note');
+    expect(userMsg?.content).toContain('kind=document');
   });
 
   it('does not inject includeInAi:false items into provider prompt', async () => {
