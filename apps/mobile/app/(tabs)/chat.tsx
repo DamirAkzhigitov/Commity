@@ -1,4 +1,5 @@
 import type {AssistantActionProposal} from '@personal-assistant/shared';
+import {summarizeAssistantProposalForLog} from '@personal-assistant/shared';
 import {useFocusEffect} from '@react-navigation/native';
 import {randomUUID} from 'expo-crypto';
 import {Link} from 'expo-router';
@@ -18,6 +19,7 @@ import {useAuth} from '../../context/auth-context';
 import {useLocalData} from '../../context/local-data-context';
 import {getAccessTokenForApi} from '../../lib/auth-access-token';
 import {applyAssistantProposal} from '../../lib/apply-assistant-proposal';
+import {appendAssistantExecutionLog} from '../../lib/assistant-execution-log';
 import {AssistantApiError, postAssistantChat} from '../../lib/assistant-api';
 import {loadAssistantChatContextPacket} from '../../lib/chat-context-loader';
 import {getAppConfig} from '../../lib/config';
@@ -197,16 +199,46 @@ export default function ChatScreen() {
 
   async function onAccept(proposal: AssistantActionProposal) {
     const merged = mergeProposalWithDraft(proposal, drafts[proposal.proposalId]);
+    await appendAssistantExecutionLog({
+      phase: 'chat_accept_proposal_start',
+      clientRequestId: lastClientRequestId ?? null,
+      proposalId: merged.proposalId,
+      actionType: merged.type,
+      functionOrEndpoint: 'ChatScreen.onAccept',
+      payloadSummary: summarizeAssistantProposalForLog(merged),
+    });
     try {
       const db = await getLocalDatabase();
       await applyAssistantProposal(db, merged, {
         clientRequestId: lastClientRequestId ?? undefined,
         messagePreview: message.trim().slice(0, 240),
       });
+      await appendAssistantExecutionLog({
+        phase: 'chat_accept_proposal_complete',
+        clientRequestId: lastClientRequestId ?? null,
+        proposalId: merged.proposalId,
+        actionType: merged.type,
+        functionOrEndpoint: 'ChatScreen.onAccept',
+        payloadSummary: summarizeAssistantProposalForLog(merged),
+        resultStatus: 'success',
+      });
       setProposals((prev) => prev.filter((x) => x.proposalId !== proposal.proposalId));
       setExpandedProposalId(null);
       refresh();
     } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      await appendAssistantExecutionLog({
+        phase: 'chat_accept_proposal_failed',
+        clientRequestId: lastClientRequestId ?? null,
+        proposalId: merged.proposalId,
+        actionType: merged.type,
+        functionOrEndpoint: 'ChatScreen.onAccept',
+        payloadSummary: summarizeAssistantProposalForLog(merged),
+        resultStatus: 'failure',
+        errorName: err.name,
+        errorMessage: err.message.slice(0, 500),
+        errorStackHead: err.stack?.split('\n').slice(0, 8).join('\n'),
+      });
       setError(e instanceof Error ? e.message : 'Apply failed');
     }
   }

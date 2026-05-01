@@ -9,6 +9,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@personal-assistant/shared': path.resolve(__dirname, '../../packages/shared/src/index.ts'),
+      'expo-sqlite': path.resolve(__dirname, 'test/stubs/expo-sqlite.ts'),
+      'expo-crypto': path.resolve(__dirname, 'test/stubs/expo-crypto.ts'),
     },
   },
 });

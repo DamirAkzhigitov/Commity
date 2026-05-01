@@ -2,6 +2,9 @@ import { ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { subscriptionPlans } from '@personal-assistant/shared';
+import { promises as fs } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AssistantService } from '../src/assistant/assistant.service';
 import { BillingService } from '../src/billing/billing.service';
 import { QuotaPolicyService } from '../src/quota/quota-policy.service';
@@ -97,5 +100,70 @@ describe('AssistantService', () => {
       outputTokens: 0,
       estimatedCostUsd: 0,
     });
+  });
+
+  it('returns no proposals for conversational messages in mock mode', async () => {
+    billing.getEntitlement.mockResolvedValue({
+      userId: 'u1',
+      plan: subscriptionPlans[0],
+      active: true,
+    });
+    quota.assertSubscribedChatWithinQuota.mockResolvedValue(undefined);
+    usage.record.mockResolvedValue(undefined);
+
+    const out = await service.chat({
+      userId: 'u1',
+      request: { clientRequestId: '00000000-0000-4000-8000-000000000004', message: 'Hello' },
+    });
+
+    expect(out.mode).toBe('mock');
+    expect(out.proposals).toEqual([]);
+    expect(out.reply).toBe('OpenAI is not configured yet.');
+  });
+
+  it('writes execution log with delete proposals for remove intent', async () => {
+    const logPath = join(tmpdir(), `pa-svc-${Date.now()}.ndjson`);
+    const prev = process.env.ASSISTANT_EXECUTION_LOG_PATH;
+    process.env.ASSISTANT_EXECUTION_LOG_PATH = logPath;
+    try {
+      billing.getEntitlement.mockResolvedValue({
+        userId: 'u1',
+        plan: subscriptionPlans[0],
+        active: true,
+      });
+      quota.assertSubscribedChatWithinQuota.mockResolvedValue(undefined);
+      usage.record.mockResolvedValue(undefined);
+
+      await service.chat({
+        userId: 'u1',
+        request: {
+          clientRequestId: '00000000-0000-4000-8000-0000000000aa',
+          message: 'remove all tasks',
+        },
+      });
+
+      const text = await fs.readFile(logPath, 'utf8');
+      const rows = text
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map(
+          (l) =>
+            JSON.parse(l) as {
+              phase?: string;
+              payloadSummary?: { proposalTypes?: string[]; proposals?: { localId?: string }[] };
+            },
+        );
+      const planned = rows.find((j) => j.phase === 'assistant_chat_proposals_planned');
+      expect(planned?.payloadSummary?.proposalTypes).toEqual(['delete_item']);
+      expect(planned?.payloadSummary?.proposals?.[0]?.localId).toBe('local_item_pending_selection');
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ASSISTANT_EXECUTION_LOG_PATH;
+      } else {
+        process.env.ASSISTANT_EXECUTION_LOG_PATH = prev;
+      }
+      await fs.unlink(logPath).catch(() => {});
+    }
   });
 });

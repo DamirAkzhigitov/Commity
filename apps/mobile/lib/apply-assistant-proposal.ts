@@ -1,4 +1,4 @@
-import type { AssistantActionProposal } from '@personal-assistant/shared';
+import { type AssistantActionProposal, summarizeAssistantProposalForLog } from '@personal-assistant/shared';
 import { randomUUID } from 'expo-crypto';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { encryptLocalContent } from './local-content-crypto';
@@ -18,6 +18,7 @@ import {
   updateSubitemEncrypted,
   updateTaskEncrypted,
 } from './local-db';
+import { appendAssistantExecutionLog } from './assistant-execution-log';
 
 export type ApplyProposalOptions = {
   clientRequestId?: string;
@@ -38,11 +39,25 @@ export async function applyAssistantProposal(
   proposal: AssistantActionProposal,
   opts: ApplyProposalOptions,
 ): Promise<{ entityKind?: string; entityId?: string }> {
-  const appliedAt = isoNow();
-  const previewCipher =
-    opts.messagePreview !== undefined ? await encryptLocalContent(opts.messagePreview) : null;
+  const executionStartTs = isoNow();
+  const t0 = Date.now();
+  await appendAssistantExecutionLog({
+    phase: 'apply_assistant_proposal_start',
+    clientRequestId: opts.clientRequestId ?? null,
+    proposalId: proposal.proposalId,
+    actionType: proposal.type,
+    functionOrEndpoint: 'applyAssistantProposal',
+    payloadSummary: summarizeAssistantProposalForLog(proposal),
+    executionStartTs,
+  });
 
-  switch (proposal.type) {
+  try {
+    const result = await (async (): Promise<{ entityKind?: string; entityId?: string }> => {
+      const appliedAt = isoNow();
+      const previewCipher =
+        opts.messagePreview !== undefined ? await encryptLocalContent(opts.messagePreview) : null;
+
+      switch (proposal.type) {
     case 'noop':
       return {};
 
@@ -264,6 +279,22 @@ export async function applyAssistantProposal(
 
     case 'delete_item': {
       const { localId, kind } = proposal.payload;
+      const deleteOp =
+        kind === 'task'
+          ? 'deleteTask'
+          : kind === 'reminder'
+            ? 'deleteReminder'
+            : kind === 'subitem'
+              ? 'deleteSubitem'
+              : 'deleteDocument';
+      await appendAssistantExecutionLog({
+        phase: 'delete_item_before_local_db',
+        clientRequestId: opts.clientRequestId ?? null,
+        proposalId: proposal.proposalId,
+        actionType: 'delete_item',
+        functionOrEndpoint: deleteOp,
+        payloadSummary: { kind, localId },
+      });
       if (kind === 'task') await deleteTask(db, localId);
       else if (kind === 'reminder') await deleteReminder(db, localId);
       else if (kind === 'subitem') await deleteSubitem(db, localId);
@@ -277,5 +308,44 @@ export async function applyAssistantProposal(
       });
       return { entityKind: kind, entityId: localId };
     }
+  }
+    })();
+
+    await appendAssistantExecutionLog({
+      phase: 'apply_assistant_proposal_success',
+      clientRequestId: opts.clientRequestId ?? null,
+      proposalId: proposal.proposalId,
+      actionType: proposal.type,
+      functionOrEndpoint: 'applyAssistantProposal',
+      payloadSummary: {
+        ...summarizeAssistantProposalForLog(proposal),
+        resultEntityKind: result.entityKind,
+        resultEntityId: result.entityId,
+      },
+      executionStartTs,
+      executionEndTs: isoNow(),
+      durationMs: Date.now() - t0,
+      resultStatus: 'success',
+    });
+
+    return result;
+  } catch (err) {
+    const e = err instanceof Error ? err : new Error(String(err));
+    await appendAssistantExecutionLog({
+      phase: 'apply_assistant_proposal_failure',
+      clientRequestId: opts.clientRequestId ?? null,
+      proposalId: proposal.proposalId,
+      actionType: proposal.type,
+      functionOrEndpoint: 'applyAssistantProposal',
+      payloadSummary: summarizeAssistantProposalForLog(proposal),
+      executionStartTs,
+      executionEndTs: isoNow(),
+      durationMs: Date.now() - t0,
+      resultStatus: 'failure',
+      errorName: e.name,
+      errorMessage: e.message.slice(0, 500),
+      errorStackHead: e.stack?.split('\n').slice(0, 8).join('\n'),
+    });
+    throw err;
   }
 }

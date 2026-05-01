@@ -1,16 +1,17 @@
-import { randomUUID } from 'crypto';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
-  type AssistantActionProposal,
   type AssistantChatRequest,
   type AssistantChatResponse,
+  summarizeAssistantProposalForLog,
 } from '@personal-assistant/shared';
 import OpenAI from 'openai';
 import { BillingService } from '../billing/billing.service';
 import { QuotaPolicyService } from '../quota/quota-policy.service';
 import { UsageService } from '../usage/usage.service';
+import { appendApiAssistantExecutionLog } from './assistant-execution-file-logger';
 import { buildUserContentForChatModel, formatPrivacyFilteredContextForModel } from './assistant-context-input';
+import { planAssistantActions } from './plan-assistant-actions';
 
 export interface ChatInput {
   userId: string;
@@ -54,168 +55,121 @@ export class AssistantService {
 
     await this.quotaPolicyService.assertSubscribedChatWithinQuota(input.userId, entitlement);
 
-    const { clientRequestId, message } = input.request;
-    const proposals = this.planActions(message);
+    const t0 = Date.now();
+    const { clientRequestId, message, context } = input.request;
+
+    await appendApiAssistantExecutionLog({
+      phase: 'assistant_chat_start',
+      clientRequestId,
+      functionOrEndpoint: 'POST /assistant/chat → AssistantService.chat',
+      payloadSummary: {
+        messageLen: message.length,
+        contextItemCount: context?.items.length ?? 0,
+      },
+    });
+
+    const proposals = planAssistantActions(message);
+    await appendApiAssistantExecutionLog({
+      phase: 'assistant_chat_proposals_planned',
+      clientRequestId,
+      payloadSummary: {
+        proposalCount: proposals.length,
+        proposalTypes: proposals.map((p) => p.type),
+        proposals: proposals.map(summarizeAssistantProposalForLog),
+      },
+    });
+
     const contextSection = formatPrivacyFilteredContextForModel(input.request.context);
     const userContent = buildUserContentForChatModel(message, contextSection);
 
-    if (!this.openai) {
+    try {
+      if (!this.openai) {
+        await this.usageService.record({
+          userId: input.userId,
+          feature: 'chat',
+          model: 'mock',
+          inputTokens: 0,
+          outputTokens: 0,
+          estimatedCostUsd: 0,
+        });
+
+        await appendApiAssistantExecutionLog({
+          phase: 'assistant_chat_complete',
+          clientRequestId,
+          resultStatus: 'success',
+          durationMs: Date.now() - t0,
+          payloadSummary: { mode: 'mock', proposalCount: proposals.length },
+        });
+
+        return {
+          clientRequestId,
+          mode: 'mock',
+          reply:
+            proposals.length > 0
+              ? 'OpenAI is not configured yet. I can still draft structured actions from your message.'
+              : 'OpenAI is not configured yet.',
+          proposals,
+        };
+      }
+
+      const response = await this.openai.responses.create({
+        model: 'gpt-4.1-mini',
+        input: [
+          {
+            role: 'system',
+            content:
+              'You are a personal assistant. Be concise and propose structured next actions when helpful.',
+          },
+          {
+            role: 'user',
+            content: userContent,
+          },
+        ],
+      });
+
+      const inputTokens = response.usage?.input_tokens ?? 0;
+      const outputTokens = response.usage?.output_tokens ?? 0;
+      const modelName = 'gpt-4.1-mini';
+
       await this.usageService.record({
         userId: input.userId,
         feature: 'chat',
-        model: 'mock',
-        inputTokens: 0,
-        outputTokens: 0,
-        estimatedCostUsd: 0,
+        model: modelName,
+        inputTokens,
+        outputTokens,
+        estimatedCostUsd: estimateChatCostUsd(modelName, inputTokens, outputTokens, this.config),
+      });
+
+      await appendApiAssistantExecutionLog({
+        phase: 'assistant_chat_complete',
+        clientRequestId,
+        resultStatus: 'success',
+        durationMs: Date.now() - t0,
+        payloadSummary: {
+          mode: 'openai',
+          proposalCount: proposals.length,
+          model: modelName,
+        },
       });
 
       return {
         clientRequestId,
-        mode: 'mock',
-        reply:
-          'OpenAI is not configured yet. I can still draft structured actions from your message.',
+        mode: 'openai',
+        reply: response.output_text,
         proposals,
       };
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      await appendApiAssistantExecutionLog({
+        phase: 'assistant_chat_failed',
+        clientRequestId,
+        resultStatus: 'failure',
+        durationMs: Date.now() - t0,
+        errorName: e.name,
+        errorMessage: e.message.slice(0, 500),
+        errorStackHead: e.stack?.split('\n').slice(0, 8).join('\n'),
+      });
+      throw err;
     }
-
-    const response = await this.openai.responses.create({
-      model: 'gpt-4.1-mini',
-      input: [
-        {
-          role: 'system',
-          content:
-            'You are a personal assistant. Be concise and propose structured next actions when helpful.',
-        },
-        {
-          role: 'user',
-          content: userContent,
-        },
-      ],
-    });
-
-    const inputTokens = response.usage?.input_tokens ?? 0;
-    const outputTokens = response.usage?.output_tokens ?? 0;
-    const modelName = 'gpt-4.1-mini';
-
-    await this.usageService.record({
-      userId: input.userId,
-      feature: 'chat',
-      model: modelName,
-      inputTokens,
-      outputTokens,
-      estimatedCostUsd: estimateChatCostUsd(modelName, inputTokens, outputTokens, this.config),
-    });
-
-    return {
-      clientRequestId,
-      mode: 'openai',
-      reply: response.output_text,
-      proposals,
-    };
-  }
-
-  private planActions(message: string): AssistantActionProposal[] {
-    const normalized = message.toLowerCase();
-    const id = () => randomUUID();
-
-    if (normalized.includes('delete') || normalized.includes('remove')) {
-      return [
-        {
-          proposalId: id(),
-          type: 'delete_item',
-          confirmationTier: 'requires_confirmation',
-          payload: {
-            localId: 'local_item_pending_selection',
-            kind: 'task',
-          },
-        },
-      ];
-    }
-
-    if (normalized.includes('update') || normalized.includes('rename')) {
-      return [
-        {
-          proposalId: id(),
-          type: 'update_item',
-          confirmationTier: 'requires_confirmation',
-          payload: {
-            localId: 'local_item_pending_selection',
-            kind: 'task',
-            updates: { titleOrLabel: message.slice(0, 512) },
-          },
-        },
-      ];
-    }
-
-    if (normalized.includes('goal')) {
-      return [
-        {
-          proposalId: id(),
-          type: 'create_task',
-          confirmationTier: 'requires_confirmation',
-          payload: {
-            title: message.slice(0, 512),
-            description: 'Outcome-oriented task (formerly framed as a goal).',
-            priority: 'high',
-          },
-        },
-      ];
-    }
-
-    if (normalized.includes('remind')) {
-      return [
-        {
-          proposalId: id(),
-          type: 'schedule_reminder',
-          confirmationTier: 'requires_confirmation',
-          payload: {
-            title: message.slice(0, 512),
-            text: message.slice(0, 2000),
-            remindAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-          },
-        },
-      ];
-    }
-
-    if (normalized.includes('note')) {
-      return [
-        {
-          proposalId: id(),
-          type: 'upsert_document',
-          confirmationTier: 'requires_confirmation',
-          payload: {
-            taskLocalId: 'local_task_pending_selection',
-            title: 'Captured note',
-            bodySnippet: message.slice(0, 2000),
-          },
-        },
-      ];
-    }
-
-    if (normalized.includes('subtask') || normalized.includes('sub-item')) {
-      return [
-        {
-          proposalId: id(),
-          type: 'create_subitem',
-          confirmationTier: 'requires_confirmation',
-          payload: {
-            taskLocalId: 'local_task_pending_selection',
-            title: message.slice(0, 512),
-          },
-        },
-      ];
-    }
-
-    return [
-      {
-        proposalId: id(),
-        type: 'create_task',
-        confirmationTier: 'requires_confirmation',
-        payload: {
-          title: message,
-          priority: 'medium',
-        },
-      },
-    ];
   }
 }
