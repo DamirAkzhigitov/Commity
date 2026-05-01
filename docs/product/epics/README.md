@@ -2,6 +2,11 @@
 
 Use this folder for larger MVP work packages that group related requirements and tasks.
 
+Current roadmap order:
+
+- `EPIC-001-usable-mvp-core-loop.md`
+- `EPIC-002-local-context-assistant-quality.md`
+
 Recommended file naming:
 
 ```text

@@ -30,15 +30,26 @@ export async function postAssistantChat(
 ): Promise<AssistantChatResponse> {
   const clientRequestId = input.clientRequestId ?? randomUUID();
   const body = parseChatRequest(input, clientRequestId);
+  const url = buildAssistantChatUrl(apiBaseUrl);
 
-  const res = await fetch(buildAssistantChatUrl(apiBaseUrl), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    const base =
+      'Chat could not reach the API. Emulator: ensure EXPO_PUBLIC_API_BASE_URL uses http://10.0.2.2:<port> or leave http://localhost (auto-remapped on Android emulator only). Physical device: set EXPO_PUBLIC_API_BASE_URL to your dev machine LAN IP. Dev HTTP requires android.usesCleartextTraffic / a new native build after changing app.json.';
+    if (e instanceof TypeError) {
+      throw new TypeError(`${e.message} (${url}). ${base}`);
+    }
+    throw e;
+  }
 
   const text = await res.text();
   if (!res.ok) {

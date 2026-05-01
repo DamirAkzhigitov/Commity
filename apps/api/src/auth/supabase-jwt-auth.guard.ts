@@ -1,5 +1,12 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { isPrismaConnectivityIssue } from './prisma-connectivity-issue';
 import { SupabaseJwtVerifierService } from './supabase-jwt-verifier.service';
 
 @Injectable()
@@ -27,11 +34,20 @@ export class SupabaseJwtAuthGuard implements CanActivate {
     }
     const email = typeof payload.email === 'string' ? payload.email : undefined;
 
-    await this.prisma.user.upsert({
-      where: { id: sub },
-      create: { id: sub, email: email ?? null },
-      update: email ? { email } : {},
-    });
+    try {
+      await this.prisma.user.upsert({
+        where: { id: sub },
+        create: { id: sub, email: email ?? null },
+        update: email ? { email } : {},
+      });
+    } catch (err) {
+      if (isPrismaConnectivityIssue(err)) {
+        throw new ServiceUnavailableException(
+          'Authentication verified, but the user directory is temporarily unavailable. Check database connectivity and retry.',
+        );
+      }
+      throw err;
+    }
 
     request.user = { sub, email };
     return true;

@@ -39,7 +39,15 @@ export default function HomeScreen() {
         </Text>
         <View style={styles.navRow}>
           <Link href="/chat" style={styles.navLink}>
-            Chat (API)
+            Chat
+          </Link>
+          <Text style={styles.navDot}>·</Text>
+          <Link href="/tasks" style={styles.navLink}>
+            Tasks
+          </Link>
+          <Text style={styles.navDot}>·</Text>
+          <Link href="/settings" style={styles.navLink}>
+            Settings
           </Link>
           <Text style={styles.navDot}>·</Text>
           <Link href="/sign-in" style={styles.navLink}>
