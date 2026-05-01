@@ -9,17 +9,19 @@ This plan is aligned with the MVP goal: an AI-chat-first personal assistant that
 ## Core Product Direction
 - The assistant is AI-chat-first, not chat-only.
 - Chat is the primary input surface.
-- Tasks, reminders, notes, and goals are first-class user data.
+- MVP navigation is fixed to Chat, Tasks, Reminders, and Settings.
+- Tasks are first-class outcome containers with Subitems and Documents.
+- Reminders are simple time-based prompts tied to a Task or Subitem.
 - The assistant proposes actions; the user remains in control of final mutations.
 
 ## Responsibility Boundaries
 
 ### Mobile Client
-- Own local-first personal data by default: chat history, tasks, reminders, notes, goals, memory, privacy flags, and action history.
+- Own local-first personal data by default: chat history, Tasks, Subitems, Documents, Reminders, memory, privacy flags, and action history.
 - Build the AI context packet locally from relevant data only.
 - Exclude private/local-only/sensitive items from AI context by default.
 - Render assistant reply and proposed actions.
-- Require explicit user confirmation before applying create, update, delete, complete, or schedule actions.
+- Require explicit user confirmation before applying create, update, delete, complete, attach, or schedule actions.
 - Schedule reminders locally after user confirmation.
 
 ### API
@@ -28,7 +30,7 @@ This plan is aligned with the MVP goal: an AI-chat-first personal assistant that
 - Validate request and response payloads using shared schemas.
 - Proxy requests to model provider; provider keys must never be in the mobile app.
 - Store operational usage metadata only (for example: model, token usage, latency, cost estimate, outcome).
-- Do not persist personal message content, full context payload, or task text.
+- Do not persist personal message content, full context payload, task text, subitem text, document content, or reminder text.
 
 ### LLM
 - Return assistant reply and schema-valid action proposals only.

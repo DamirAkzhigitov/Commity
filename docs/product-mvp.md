@@ -2,22 +2,28 @@
 
 ## MVP Goal
 
-Ship a focused Android assistant that lets a user chat naturally, convert
-messages into tasks/notes/reminders, receive reliable reminders, and use a paid
-AI subscription without exposing OpenAI keys on the device or storing personal
-assistant data on the backend by default.
+Ship a focused Android assistant that lets a user chat naturally, turn messy
+life admin into larger Tasks with clear next steps, attach useful Documents,
+receive reliable reminders, and use a paid AI subscription without exposing
+OpenAI keys on the device or storing personal assistant data on the backend by
+default.
 
 ## First Release Scope
 
 - Account sign-in and subscription entitlement.
 - Chat with OpenAI through the backend, using a small local context packet built
   on the device.
-- Structured assistant actions for tasks, notes, reminders, and goals.
-- Task list with status, priority, due date, and source tracking.
-- Notes with assistant summaries.
-- Reminder list and local scheduled notifications.
-- Local-first storage for tasks, notes, reminders, goals, memory, and chat
-  history.
+- Fixed mobile tabs: Chat, Tasks, Reminders, and Settings.
+- Structured assistant actions for Tasks, Subitems, Documents, and Reminders.
+- Tasks as outcome containers, not quick todos. A Task can have status,
+  priority, due date, source tracking, many Subitems, and related Documents.
+- Subitems as concrete steps inside a Task. The user or PA can mark Subitems
+  done after confirmation.
+- Documents as task-scoped forms, files, links, references, or extracted
+  snippets that help PA understand the Task context.
+- Reminder list and local scheduled notifications tied to a Task or Subitem.
+- Local-first storage for tasks, subitems, documents, reminders, memory, and
+  chat history.
 - Local context retrieval using SQLite search, summaries, recency, importance,
   due dates, and completion state.
 - Usage tracking, monthly quotas, and backend-enforced limits.
@@ -34,12 +40,14 @@ assistant data on the backend by default.
 - Complex autonomous agents that change data without user visibility.
 - Fine-grained calendar/email integrations.
 - Server-driven proactive reminders and push notifications.
+- Top-level Notes and Goals tabs. Notes and goals can be revisited later; for
+  MVP, references and planning context should live under Tasks or memory.
 
 ## Subscription Assumptions
 
 The MVP should start with simple tiers that are easy to enforce:
 
-- Free: local tasks, notes, reminders, limited trial chat messages.
+- Free: local tasks, subitems, documents, reminders, limited trial chat messages.
 - Plus: monthly AI quota, higher local-context limits, and better model access
   for complex tasks.
 - Pro: larger quota, deeper local context windows, more advanced reasoning, and
@@ -53,12 +61,13 @@ Usage records should not store personal message content.
 ## Assistant Behavior Rules
 
 - Create proposed actions from chat before mutating important user data.
-- Confirm destructive changes such as deleting notes or completing many tasks.
+- Confirm destructive changes such as deleting Documents or completing many
+  Tasks/Subitems.
 - Preserve the source message for each AI-created entity.
 - Validate dates, priorities, and action payloads with shared schemas.
 - Prefer concise, actionable reminders over generic motivational messages.
-- Build assistant context locally from relevant tasks, notes, reminders, goals,
-  memory summaries, and recent chat before calling the backend.
+- Build assistant context locally from relevant Tasks, Subitems, Documents,
+  Reminders, memory summaries, and recent chat before calling the backend.
 - Ask for confirmation before sending unusually sensitive or broad personal
   context to AI.
 

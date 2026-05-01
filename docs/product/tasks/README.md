@@ -2,6 +2,15 @@
 
 Use this folder for implementation-ready work items.
 
+Current MVP task direction:
+
+- `TASK-001-backend-foundation-auth-ai-usage.md`
+- `TASK-002-shared-assistant-action-contracts.md`
+- `TASK-003-mobile-local-data-and-chat-shell.md`
+- `TASK-004-mobile-confirmed-reminders.md`
+- `TASK-005-restore-chat-history-and-api-context.md`
+- `TASK-006-task-subitems-documents-model.md`
+
 Recommended file naming:
 
 ```text

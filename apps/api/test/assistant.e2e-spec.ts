@@ -76,6 +76,18 @@ describe('API auth, quota, usage (e2e)', () => {
       .expect(400);
   });
 
+  it('POST /assistant/chat rejects invalid context shape with 400', async () => {
+    await request(app.getHttpServer())
+      .post('/assistant/chat')
+      .set('Authorization', 'Bearer good')
+      .send({
+        clientRequestId: reqId,
+        message: 'hi',
+        context: { schemaVersion: 'not-a-number', items: [] },
+      })
+      .expect(400);
+  });
+
   it('returns 403 when trial message cap is reached before AI', async () => {
     const past = new Date(Date.now() - 24 * 60 * 60 * 1000);
     await prisma.user.create({
@@ -144,25 +156,36 @@ describe('API auth, quota, usage (e2e)', () => {
     expect(await prisma.usageEvent.count({ where: { userId: 'e2e-user-1' } })).toBe(planLimit);
   });
 
-  it('persists a non-content usage row on successful mock chat', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/assistant/chat')
-      .set('Authorization', 'Bearer good')
-      .send({ clientRequestId: reqId, message: 'hello quota world' })
-      .expect(200);
+  it(
+    'persists non-content usage row on chat success without storing message bodies',
+    async () => {
+      const res = await request(app.getHttpServer())
+        .post('/assistant/chat')
+        .set('Authorization', 'Bearer good')
+        .send({ clientRequestId: reqId, message: 'hello quota world' })
+        .expect(200);
 
-    expect(res.body.mode).toBe('mock');
-    expect(res.body.clientRequestId).toBe(reqId);
-    expect(Array.isArray(res.body.proposals)).toBe(true);
+      expect(['mock', 'openai']).toContain(res.body.mode);
+      expect(res.body.clientRequestId).toBe(reqId);
+      expect(Array.isArray(res.body.proposals)).toBe(true);
 
-    const rows = await prisma.usageEvent.findMany({ where: { userId: 'e2e-user-1' } });
-    expect(rows).toHaveLength(1);
-    expect(rows[0].feature).toBe('chat');
-    expect(rows[0].model).toBe('mock');
-    expect(rows[0].inputTokens).toBe(0);
-    expect(rows[0].outputTokens).toBe(0);
-    expect(Number(rows[0].estimatedCostUsd)).toBe(0);
-    const json = JSON.stringify(rows[0]);
-    expect(json).not.toContain('hello quota world');
-  });
+      const rows = await prisma.usageEvent.findMany({ where: { userId: 'e2e-user-1' } });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].feature).toBe('chat');
+      if (res.body.mode === 'mock') {
+        expect(rows[0].model).toBe('mock');
+        expect(rows[0].inputTokens).toBe(0);
+        expect(rows[0].outputTokens).toBe(0);
+        expect(Number(rows[0].estimatedCostUsd)).toBe(0);
+      } else {
+        expect(rows[0].model).toBe('gpt-4.1-mini');
+        expect(Number(rows[0].inputTokens)).toBeGreaterThanOrEqual(0);
+        expect(Number(rows[0].outputTokens)).toBeGreaterThanOrEqual(0);
+        expect(Number(rows[0].estimatedCostUsd)).toBeGreaterThanOrEqual(0);
+      }
+      const json = JSON.stringify(rows[0]);
+      expect(json).not.toContain('hello quota world');
+    },
+    20000,
+  );
 });

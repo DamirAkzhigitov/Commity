@@ -61,6 +61,12 @@ Use it to understand each document in one minute and open only what you need.
 - [TASK-004: Mobile Confirmed Reminders](./product/tasks/TASK-004-mobile-confirmed-reminders.md)  
   Mobile task for confirmation-gated reminder scheduling and UX flow.
 
+- [TASK-005: Restore Chat History And API Context](./product/tasks/TASK-005-restore-chat-history-and-api-context.md)
+  Fix multi-turn chat rendering on mobile and wire API model input to privacy-filtered context items.
+
+- [TASK-006: Task Subitems And Documents Model](./product/tasks/TASK-006-task-subitems-documents-model.md)
+  Defines the next implementation slice for outcome-oriented Tasks, Subitems, Documents, linked Reminders, and local context support.
+
 ## Recommended Reading Order
 1. `assistant-architecture-guardrails.md` (why and boundaries)
 2. `ai-context-contract.md` (exact payload and error contract)

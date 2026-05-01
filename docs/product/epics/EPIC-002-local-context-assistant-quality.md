@@ -4,9 +4,9 @@
 Improve assistant usefulness after the core loop by building higher-quality local context packets on-device, grounding assistant responses in recent and relevant local data, and preserving the local-first privacy model.
 
 ## Problem / Opportunity
-EPIC-001 proves that users can chat, review structured proposals, and save personal assistant data locally. The next product risk is assistant quality: without reliable local context selection, the assistant may miss existing tasks, duplicate reminders, ignore goals, or give generic responses.
+EPIC-001 proves that users can chat, review structured proposals, and save personal assistant data locally. The next product risk is assistant quality: without reliable local context selection, the assistant may miss existing Tasks, duplicate Reminders, ignore Subitems or Documents, or give generic responses.
 
-The opportunity is to make the assistant feel personally useful while keeping tasks, notes, reminders, goals, memory, and chat history owned by the mobile app. The backend should remain an authenticated AI proxy with entitlement, quota, usage, and billing responsibilities only.
+The opportunity is to make the assistant feel personally useful while keeping Tasks, Subitems, Documents, Reminders, memory, and chat history owned by the mobile app. The backend should remain an authenticated AI proxy with entitlement, quota, usage, and billing responsibilities only.
 
 ## Why Now
 Local context is already part of the MVP scope and shared assistant contracts. This epic turns the first chat shell into a quality loop that can be evaluated before adding billing polish, voice, cloud sync, or broader integrations.
@@ -15,14 +15,14 @@ Local context is already part of the MVP scope and shared assistant contracts. T
 - `REQ-001-mvp-development-sequence.md`
 
 ## Goals
-- Build bounded context packets locally from tasks, notes, reminders, goals, memory summaries, and recent chat.
+- Build bounded context packets locally from Tasks, Subitems, Documents, Reminders, memory summaries, and recent chat.
 - Apply privacy filtering before any context leaves the device.
-- Improve assistant responses by including relevant due dates, incomplete work, recent decisions, source metadata, and user goals.
+- Improve assistant responses by including relevant due dates, incomplete Subitems, related Documents, recent decisions, and source metadata.
 - Add deterministic tests or fixtures for context ranking, redaction, packet size limits, and assistant proposal quality.
 - Keep backend usage records free of personal message content and context packet content.
 
 ## Non-Goals
-- Server-stored personal memory, tasks, notes, reminders, goals, or chat history.
+- Server-stored personal memory, Tasks, Subitems, Documents, Reminders, or chat history.
 - Cloud sync or multi-device conflict resolution.
 - Local vector database, on-device embedding model, or offline AI.
 - Voice input, transcription, or proactive background agents.
@@ -30,7 +30,7 @@ Local context is already part of the MVP scope and shared assistant contracts. T
 
 ## Scope
 - In:
-  - Local context retrieval using SQLite fields, recency, due dates, completion state, importance, source metadata, and simple text search.
+  - Local context retrieval using SQLite fields, recency, due dates, completion state, importance, source metadata, task hierarchy, and simple text search.
   - Context packet budgeting so mobile sends only the smallest useful context window.
   - Privacy flags and sensitive-category filtering before backend AI calls.
   - User confirmation before sending unusually sensitive or broad personal context.
@@ -51,24 +51,26 @@ Local context is already part of the MVP scope and shared assistant contracts. T
 - Backend assistant endpoint that accepts typed context packets without persisting personal content.
 
 ## Milestones / Tasks
-- `TASK-005-mobile-local-context-retrieval.md`: Build local context selection, ranking, privacy filtering, packet budgeting, and tests.
-- `TASK-006-assistant-quality-grounding.md`: Tune assistant prompt handling and proposal behavior so responses use context, avoid duplicates, and explain uncertainty.
-- `TASK-007-context-quality-evaluation.md`: Add repeatable evaluation fixtures covering tasks, notes, reminders, goals, sensitive data exclusion, and packet size limits.
+- `TASK-005-restore-chat-history-and-api-context.md`: Restore visible chat history and ensure the API uses privacy-filtered context items in model input.
+- `TASK-006-task-subitems-documents-model.md`: Add local Task/Subitem/Document models and context support.
+- `TASK-007-mobile-local-context-retrieval.md`: Build local context selection, ranking, privacy filtering, packet budgeting, and tests.
+- `TASK-008-assistant-quality-grounding.md`: Tune assistant prompt handling and proposal behavior so responses use context, avoid duplicates, and explain uncertainty.
+- `TASK-009-context-quality-evaluation.md`: Add repeatable evaluation fixtures covering Tasks, Subitems, Documents, Reminders, sensitive data exclusion, and packet size limits.
 
 ## Done When
 - [ ] The mobile app builds a bounded context packet locally before assistant requests.
 - [ ] Local-only/private items are excluded from context by default.
 - [ ] Sensitive or unusually broad context requires explicit user confirmation before sending.
 - [ ] Context packet size limits are enforced and tested.
-- [ ] Assistant responses reference relevant local context when available and avoid obvious duplicate task/reminder proposals.
-- [ ] Quality fixtures cover at least task follow-up, reminder disambiguation, note recall, goal alignment, and sensitive-context exclusion.
+- [ ] Assistant responses reference relevant local context when available and avoid obvious duplicate Task/Subitem/Reminder proposals.
+- [ ] Quality fixtures cover at least task follow-up, subitem completion, document recall, reminder disambiguation, and sensitive-context exclusion.
 - [ ] Backend usage events and logs do not store personal messages, assistant replies, or context packet content.
 
 ## Success Metrics
 - At least 80% of local quality fixtures pass without manual correction.
 - Context packets stay within the agreed MVP budget for normal use cases.
 - No known personal assistant content is persisted in backend Postgres or usage logs.
-- Manual Android testing confirms the assistant can use local tasks, notes, reminders, and goals to produce useful proposals.
+- Manual Android testing confirms the assistant can use local Tasks, Subitems, Documents, and Reminders to produce useful proposals.
 - Fewer duplicate task/reminder proposals in evaluated flows compared with the EPIC-001 chat shell baseline.
 
 ## Risks And Mitigations

@@ -7,7 +7,7 @@ const sampleTasks: Task[] = [
   {
     id: 'task-1',
     title: 'Plan the first MVP slice',
-    description: 'Turn chat into structured tasks, notes, and reminders.',
+    description: 'Turn chat into structured tasks and reminders.',
     status: 'in_progress',
     priority: 'high',
     createdAt: new Date().toISOString(),
@@ -34,8 +34,8 @@ export default function HomeScreen() {
         <Text style={styles.eyebrow}>AI personal assistant</Text>
         <Text style={styles.title}>Chat that becomes action.</Text>
         <Text style={styles.subtitle}>
-          Capture tasks, remember notes, schedule reminders, and keep goals moving with a
-          backend-controlled OpenAI bridge.
+          Capture tasks, schedule reminders, and chat through a backend-controlled OpenAI
+          bridge.
         </Text>
         <View style={styles.navRow}>
           <Link href="/chat" style={styles.navLink}>

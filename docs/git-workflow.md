@@ -13,7 +13,7 @@ Commit after each working slice:
 4. Auth integration.
 5. OpenAI bridge and usage tracking.
 6. Google Play Billing verification.
-7. Tasks, notes, reminders, and local notifications.
+7. Tasks, Subitems, Documents, Reminders, and local notifications.
 8. Memory and proactive reminders.
 
 ## Suggested Commands

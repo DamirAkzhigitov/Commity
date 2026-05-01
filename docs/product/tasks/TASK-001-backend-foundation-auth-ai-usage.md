@@ -21,7 +21,7 @@ Backend
 - [x] Assistant requests are rejected before AI calls when the user is unauthenticated, lacks entitlement, or exceeds quota.
 - [x] Usage events are persisted in Postgres with user id, model, feature, token counts, estimated cost, and timestamps.
 - [x] Usage events do not store personal message content or full context packets.
-- [x] Backend does not persist personal assistant content (messages, tasks, notes, reminders, context packets), and only infrastructure records are written.
+- [x] Backend does not persist personal assistant content (messages, Tasks, Subitems, Documents, Reminders, context packets), and only infrastructure records are written.
 - [x] API health and local development setup are documented and runnable.
 
 ## What Will Be Implemented
@@ -30,7 +30,7 @@ Backend
 - **Pre-AI gates**: Before any OpenAI call (or before returning mock AI results if treated as a billed “assistant turn”), enforce: valid JWT, active entitlement for that user, and quota not exceeded (messages and/or tokens per policy). Fail with 401/403 as appropriate **before** provider invocation.
 - **Durable usage logging**: Replace in-memory `UsageService` storage with Prisma writes to `UsageEvent` (existing model: `userId`, `feature`, `model`, `inputTokens`, `outputTokens`, `estimatedCostUsd`, `createdAt`). Read path for quota aggregates from Postgres (filter by user + billing period).
 - **Non-sensitive usage payloads**: Record only operational fields; never log or persist user message text, assistant reply text, or context packets on `UsageEvent` (or in structured app logs for these flows).
-- **Local-first alignment**: Assistant handler does not insert chat messages, tasks, notes, reminders, or goals into Postgres.
+- **Local-first alignment**: Assistant handler does not insert chat messages, Tasks, Subitems, Documents, Reminders, or memory into Postgres.
 - **Immediate schema alignment**: Backend persistence remains infrastructure-only for this MVP slice, matching local-first privacy and avoiding parallel personal-content storage paths.
 - **Documentation**: Runnable instructions for local API + Postgres (migrate, seed if any, env template) and confirmation of the health check endpoint.
 
@@ -62,7 +62,7 @@ Exact paths should match existing controllers unless renamed in implementation; 
 - **Privacy**: Personal assistant content stays on-device per EPIC-001; the API may receive messages only as transient request bodies for AI proxying. Do not write that content to Postgres, usage rows, or long-lived logs. If structured logging is added later, scrub or omit message bodies.
 - **JWT**: Validate signature, `exp`, and standard claims; reject unsigned or wrong-audience tokens. Do not expose service-role keys to the mobile app.
 - **Quota bypass**: All assistant/billing/usage routes in scope must go through the guard so there is no unauthenticated shortcut.
-- **Backend storage boundary**: Infrastructure data only in Postgres for MVP. No backend writes for personal tasks, notes, reminders, goals, chat history, or memory content.
+- **Backend storage boundary**: Infrastructure data only in Postgres for MVP. No backend writes for personal Tasks, Subitems, Documents, Reminders, chat history, or memory content.
 
 ## Test Plan
 - **Auth**: Request to `POST /assistant/chat` without `Authorization` → 401. Malformed or expired JWT → 401.

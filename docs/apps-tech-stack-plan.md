@@ -18,7 +18,7 @@ purchase verification.
 
 Add local-first infrastructure to `apps/mobile`:
 
-- `expo-sqlite` for tasks, notes, reminders, goals, memory, chat history,
+- `expo-sqlite` for Tasks, Subitems, Documents, Reminders, memory, chat history,
   privacy flags, and undo history.
 - `expo-notifications` for local reminder scheduling in MVP.
 - `expo-secure-store` for Supabase session/token data and sensitive local
@@ -38,7 +38,7 @@ Narrow the backend responsibility in `apps/api`:
 
 - Add Supabase Auth JWT verification and replace demo `userId` values.
 - Keep the OpenAI bridge, but make it return structured action proposals.
-- Do not directly create personal tasks, notes, reminders, goals, or memory in
+- Do not directly create personal Tasks, Subitems, Documents, Reminders, or memory in
   backend Postgres for MVP.
 - Persist usage events in Postgres instead of in memory.
 - Enforce free, plus, and pro quotas before OpenAI calls.
@@ -48,8 +48,10 @@ Narrow the backend responsibility in `apps/api`:
 
 ## Prisma Direction
 
-The current Prisma schema includes personal assistant data models such as tasks,
-notes, reminders, goals, memory items, conversations, and chat messages.
+The current Prisma schema previously included personal assistant data models such
+as tasks, notes, reminders, goals, memory items, conversations, and chat
+messages. The MVP product model is now Tasks, Subitems, Documents, Reminders,
+memory, and chat history on-device.
 
 For MVP, move those personal assistant records to mobile SQLite by default.
 Backend Postgres should store only infrastructure data:

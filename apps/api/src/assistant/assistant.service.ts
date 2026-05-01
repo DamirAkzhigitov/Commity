@@ -10,6 +10,7 @@ import OpenAI from 'openai';
 import { BillingService } from '../billing/billing.service';
 import { QuotaPolicyService } from '../quota/quota-policy.service';
 import { UsageService } from '../usage/usage.service';
+import { buildUserContentForChatModel, formatPrivacyFilteredContextForModel } from './assistant-context-input';
 
 export interface ChatInput {
   userId: string;
@@ -55,6 +56,8 @@ export class AssistantService {
 
     const { clientRequestId, message } = input.request;
     const proposals = this.planActions(message);
+    const contextSection = formatPrivacyFilteredContextForModel(input.request.context);
+    const userContent = buildUserContentForChatModel(message, contextSection);
 
     if (!this.openai) {
       await this.usageService.record({
@@ -85,7 +88,7 @@ export class AssistantService {
         },
         {
           role: 'user',
-          content: message,
+          content: userContent,
         },
       ],
     });

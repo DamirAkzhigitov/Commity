@@ -1,31 +1,36 @@
-import type { AssistantActionProposal } from '@personal-assistant/shared';
-import { randomUUID } from 'expo-crypto';
-import { Link } from 'expo-router';
-import { useMemo, useRef, useState } from 'react';
+import type {AssistantActionProposal} from '@personal-assistant/shared';
+import {useFocusEffect} from '@react-navigation/native';
+import {randomUUID} from 'expo-crypto';
+import {Link} from 'expo-router';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   ActivityIndicator,
   Pressable,
+  KeyboardAvoidingView,
   ScrollView,
   StyleSheet,
   Text,
+  Keyboard,
   TextInput,
   View,
 } from 'react-native';
-import { useAuth } from '../../context/auth-context';
-import { useLocalData } from '../../context/local-data-context';
-import { getAccessTokenForApi } from '../../lib/auth-access-token';
-import { applyAssistantProposal } from '../../lib/apply-assistant-proposal';
-import { AssistantApiError, postAssistantChat } from '../../lib/assistant-api';
-import { loadAssistantChatContextPacket } from '../../lib/chat-context-loader';
-import { getAppConfig } from '../../lib/config';
+import {useAuth} from '../../context/auth-context';
+import {useLocalData} from '../../context/local-data-context';
+import {getAccessTokenForApi} from '../../lib/auth-access-token';
+import {applyAssistantProposal} from '../../lib/apply-assistant-proposal';
+import {AssistantApiError, postAssistantChat} from '../../lib/assistant-api';
+import {loadAssistantChatContextPacket} from '../../lib/chat-context-loader';
+import {getAppConfig} from '../../lib/config';
 import {
   getLocalDatabase,
   insertChatMessage,
+  loadRecentChatMessagesDecrypted,
+  type LocalChatMessage,
   undoLastAppliedCreate,
 } from '../../lib/local-db';
-import { encryptLocalContent } from '../../lib/local-content-crypto';
-import type { ProposalDraftFields } from '../../lib/merge-proposal-draft';
-import { mergeProposalWithDraft } from '../../lib/merge-proposal-draft';
+import {encryptLocalContent} from '../../lib/local-content-crypto';
+import type {ProposalDraftFields} from '../../lib/merge-proposal-draft';
+import {mergeProposalWithDraft} from '../../lib/merge-proposal-draft';
 
 function proposalSummary(p: AssistantActionProposal): string {
   switch (p.type) {
@@ -49,9 +54,9 @@ function proposalSummary(p: AssistantActionProposal): string {
 function proposalDraftSeed(p: AssistantActionProposal): ProposalDraftFields {
   switch (p.type) {
     case 'create_task':
-      return { title: p.payload.title, description: p.payload.description ?? '' };
+      return {title: p.payload.title, description: p.payload.description ?? ''};
     case 'create_note':
-      return { title: p.payload.title, body: p.payload.body };
+      return {title: p.payload.title, body: p.payload.body};
     case 'schedule_reminder':
       return {
         title: p.payload.title,
@@ -70,10 +75,10 @@ function proposalDraftSeed(p: AssistantActionProposal): ProposalDraftFields {
 }
 
 export default function ChatScreen() {
-  const { session, isLoading, signOut } = useAuth();
-  const { refresh } = useLocalData();
-  const [message, setMessage] = useState('Remind me to water plants tomorrow');
-  const [reply, setReply] = useState<string | null>(null);
+  const {session, isLoading, signOut} = useAuth();
+  const {refresh} = useLocalData();
+  const [message, setMessage] = useState('');
+  const [chatMessages, setChatMessages] = useState<LocalChatMessage[]>([]);
   const [proposals, setProposals] = useState<AssistantActionProposal[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -84,15 +89,32 @@ export default function ChatScreen() {
 
   const undoHint = useMemo(() => 'Undo removes the last assistant-created task/note/reminder/goal.', []);
 
+  const reloadChatMessages = useCallback(async () => {
+    if (!session) return;
+    try {
+      const db = await getLocalDatabase();
+      const rows = await loadRecentChatMessagesDecrypted(db);
+      setChatMessages(rows.filter((r) => r.role === 'user' || r.role === 'assistant'));
+    } catch {
+      // Keep displayed history on transient DB/read errors.
+    }
+  }, [session]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void reloadChatMessages();
+    }, [reloadChatMessages]),
+  );
+
   async function send() {
     const token = await getAccessTokenForApi();
     if (!token) {
       setError('Not signed in');
       return;
     }
+    setMessage('')
     setError(null);
     setSending(true);
-    setReply(null);
     setProposals([]);
     const trimmed = message.trim();
     if (!trimmed) {
@@ -106,35 +128,54 @@ export default function ChatScreen() {
 
     try {
       const db = await getLocalDatabase();
-      await insertChatMessage(db, {
+      const userMsgId = await insertChatMessage(db, {
         role: 'user',
         bodyCipher: await encryptLocalContent(trimmed),
         clientRequestId,
         createdAt,
       });
 
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: userMsgId,
+          role: 'user',
+          body: trimmed,
+          clientRequestId,
+          createdAt,
+        },
+      ]);
+
       const context = await loadAssistantChatContextPacket();
 
-      console.log('context: ', context);
-      console.log('trimmed: ', trimmed);
-
-      const { apiBaseUrl } = getAppConfig();
+      const {apiBaseUrl} = getAppConfig();
       const res = await postAssistantChat(apiBaseUrl, token, {
         message: trimmed,
         clientRequestId,
         context,
       });
 
-      setReply(res.reply);
       setProposals(res.proposals);
       setLastClientRequestId(clientRequestId);
 
-      await insertChatMessage(db, {
+      const assistantCreatedAt = new Date().toISOString();
+      const assistantMsgId = await insertChatMessage(db, {
         role: 'assistant',
         bodyCipher: await encryptLocalContent(res.reply),
         clientRequestId,
-        createdAt: new Date().toISOString(),
+        createdAt: assistantCreatedAt,
       });
+
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: assistantMsgId,
+          role: 'assistant',
+          body: res.reply,
+          clientRequestId,
+          createdAt: assistantCreatedAt,
+        },
+      ]);
 
       refresh();
     } catch (e) {
@@ -145,6 +186,7 @@ export default function ChatScreen() {
       } else {
         setError('Request failed');
       }
+      await reloadChatMessages();
     } finally {
       setSending(false);
     }
@@ -166,37 +208,37 @@ export default function ChatScreen() {
     }
   }
 
-  async function onUndo() {
-    setError(null);
-    try {
-      const db = await getLocalDatabase();
-      const ok = await undoLastAppliedCreate(db);
-      if (!ok) setError('Nothing to undo yet.');
-      refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Undo failed');
-    }
-  }
-
   function toggleDraft(proposalId: string, proposal: AssistantActionProposal) {
     setExpandedProposalId((prev) => (prev === proposalId ? null : proposalId));
     setDrafts((d) => ({
       ...d,
-      [proposalId]: { ...proposalDraftSeed(proposal), ...d[proposalId] },
+      [proposalId]: {...proposalDraftSeed(proposal), ...d[proposalId]},
     }));
   }
 
   function updateDraft(proposalId: string, patch: ProposalDraftFields) {
     setDrafts((d) => ({
       ...d,
-      [proposalId]: { ...d[proposalId], ...patch },
+      [proposalId]: {...d[proposalId], ...patch},
     }));
   }
+
+  useEffect(() => {
+    const showEvent = 'keyboardDidShow';
+
+    const sub = Keyboard.addListener(showEvent, () => {
+      setTimeout(() => {
+        messagesScrollRef.current?.scrollToEnd({animated: true});
+      }, 50);
+    });
+
+    return () => sub.remove();
+  }, []);
 
   if (isLoading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator />
+        <ActivityIndicator/>
       </View>
     );
   }
@@ -216,26 +258,32 @@ export default function ChatScreen() {
   }
 
   return (
-    <View style={styles.chatContainer}>
-      <ScrollView
-        ref={messagesScrollRef}
-        style={styles.messagesScroll}
-        contentContainerStyle={styles.messagesContent}
-        keyboardShouldPersistTaps="handled"
-        onContentSizeChange={() => messagesScrollRef.current?.scrollToEnd({ animated: true })}
-      >
-        <Text style={styles.screenTitle}>Assistant chat</Text>
-        <Text style={styles.meta}>API: {getAppConfig().apiBaseUrl}</Text>
-        {reply ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Reply</Text>
-            <Text style={styles.cardBody}>{reply}</Text>
-          </View>
-        ) : null}
-        {proposals.length > 0 ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Proposals</Text>
-            {proposals.map((p) => (
+    <KeyboardAvoidingView style={{flex: 1}} behavior="height">
+
+      <View style={styles.chatContainer}>
+
+        <ScrollView
+          ref={messagesScrollRef}
+          style={styles.messagesScroll}
+          contentContainerStyle={styles.messagesContent}
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={() => messagesScrollRef.current?.scrollToEnd({animated: true})}
+        >
+          <Text style={styles.screenTitle}>Assistant chat</Text>
+          <Text style={styles.meta}>API: {getAppConfig().apiBaseUrl}</Text>
+          {chatMessages.map((row) => (
+            <View
+              key={row.id}
+              style={[styles.messageCard, row.role === 'user' ? styles.userMessageCard : styles.assistantMessageCard]}
+            >
+              <Text style={styles.messageRole}>{row.role === 'user' ? 'You' : 'Assistant'}</Text>
+              <Text style={styles.cardBody}>{row.body}</Text>
+            </View>
+          ))}
+          {proposals.length > 0 ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Proposals</Text>
+              {proposals.map((p) => (
                 <View key={p.proposalId} style={styles.proposalBlock}>
                   <Text style={styles.proposalLine}>
                     • [{p.confirmationTier}] {proposalSummary(p)}
@@ -243,64 +291,67 @@ export default function ChatScreen() {
                   {expandedProposalId === p.proposalId ? proposalEditors(p, drafts[p.proposalId], updateDraft) : null}
                   <View style={styles.proposalActions}>
                     {p.type !== 'noop' ? (
-                        <Pressable
-                            onPress={() => void onAccept(p)}
-                            style={({ pressed }) => [styles.miniPrimary, pressed && styles.buttonPressed]}
-                        >
-                          <Text style={styles.miniPrimaryLabel}>Accept</Text>
-                        </Pressable>
+                      <Pressable
+                        onPress={() => void onAccept(p)}
+                        style={({pressed}) => [styles.miniPrimary, pressed && styles.buttonPressed]}
+                      >
+                        <Text style={styles.miniPrimaryLabel}>Accept</Text>
+                      </Pressable>
                     ) : null}
                     {(p.type === 'create_task' ||
-                        p.type === 'create_note' ||
-                        p.type === 'schedule_reminder' ||
-                        p.type === 'create_goal') && (
-                        <Pressable
-                            onPress={() => toggleDraft(p.proposalId, p)}
-                            style={({ pressed }) => [styles.miniSecondary, pressed && styles.buttonPressed]}
-                        >
-                          <Text style={styles.miniSecondaryLabel}>
-                            {expandedProposalId === p.proposalId ? 'Hide edit' : 'Edit'}
-                          </Text>
-                        </Pressable>
+                      p.type === 'create_note' ||
+                      p.type === 'schedule_reminder' ||
+                      p.type === 'create_goal') && (
+                      <Pressable
+                        onPress={() => toggleDraft(p.proposalId, p)}
+                        style={({pressed}) => [styles.miniSecondary, pressed && styles.buttonPressed]}
+                      >
+                        <Text style={styles.miniSecondaryLabel}>
+                          {expandedProposalId === p.proposalId ? 'Hide edit' : 'Edit'}
+                        </Text>
+                      </Pressable>
                     )}
                     <Pressable
-                        onPress={() => setProposals((prev) => prev.filter((x) => x.proposalId !== p.proposalId))}
-                        style={({ pressed }) => [styles.miniGhost, pressed && styles.buttonPressed]}
+                      onPress={() => setProposals((prev) => prev.filter((x) => x.proposalId !== p.proposalId))}
+                      style={({pressed}) => [styles.miniGhost, pressed && styles.buttonPressed]}
                     >
                       <Text style={styles.miniGhostLabel}>Dismiss</Text>
                     </Pressable>
                   </View>
                   {(p.type === 'update_item' || p.type === 'delete_item') && (
-                      <Text style={styles.proposalHint}>Structured edits apply directly from the proposal payload.</Text>
+                    <Text style={styles.proposalHint}>Structured edits apply directly from the
+                      proposal payload.</Text>
                   )}
                 </View>
-            ))}
-          </View>
-        ) : null}
-      </ScrollView>
+              ))}
+            </View>
+          ) : null}
+        </ScrollView>
 
-      <View style={styles.composerContainer}>
-        <TextInput
-          multiline
-          onChangeText={setMessage}
-          placeholder="Message"
-          style={styles.input}
-          value={message}
-        />
-        <Pressable
-          disabled={sending}
-          onPress={() => void send()}
-          style={({ pressed }) => [styles.button, pressed && styles.buttonPressed, sending && styles.buttonDisabled]}
-        >
-          {sending ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonLabel}>Send to assistant</Text>
-          )}
-        </Pressable>
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+        <View style={styles.composerContainer}>
+          <TextInput
+            multiline
+            onChangeText={setMessage}
+            placeholder="Message"
+            style={styles.input}
+            value={message}
+          />
+          <Pressable
+            disabled={sending}
+            onPress={() => void send()}
+            style={({pressed}) => [styles.button, pressed && styles.buttonPressed, sending && styles.buttonDisabled]}
+          >
+            {sending ? (
+              <ActivityIndicator color="#fff"/>
+            ) : (
+              <Text style={styles.buttonLabel}>Send</Text>
+            )}
+          </Pressable>
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+        </View>
       </View>
-    </View>
+    </KeyboardAvoidingView>
+
   );
 }
 
@@ -310,7 +361,7 @@ function proposalEditors(
   updateDraft: (proposalId: string, patch: ProposalDraftFields) => void,
 ) {
   const seed = proposalDraftSeed(p);
-  const d = { ...seed, ...draft };
+  const d = {...seed, ...draft};
 
   switch (p.type) {
     case 'create_task':
@@ -320,14 +371,14 @@ function proposalEditors(
           <TextInput
             style={styles.editInput}
             value={d.title ?? ''}
-            onChangeText={(t) => updateDraft(p.proposalId, { title: t })}
+            onChangeText={(t) => updateDraft(p.proposalId, {title: t})}
           />
           <Text style={styles.editLabel}>Description</Text>
           <TextInput
             multiline
             style={[styles.editInput, styles.editMultiline]}
             value={d.description ?? ''}
-            onChangeText={(t) => updateDraft(p.proposalId, { description: t })}
+            onChangeText={(t) => updateDraft(p.proposalId, {description: t})}
           />
         </View>
       );
@@ -338,14 +389,14 @@ function proposalEditors(
           <TextInput
             style={styles.editInput}
             value={d.title ?? ''}
-            onChangeText={(t) => updateDraft(p.proposalId, { title: t })}
+            onChangeText={(t) => updateDraft(p.proposalId, {title: t})}
           />
           <Text style={styles.editLabel}>Body</Text>
           <TextInput
             multiline
             style={[styles.editInput, styles.editMultiline]}
             value={d.body ?? ''}
-            onChangeText={(t) => updateDraft(p.proposalId, { body: t })}
+            onChangeText={(t) => updateDraft(p.proposalId, {body: t})}
           />
         </View>
       );
@@ -356,19 +407,19 @@ function proposalEditors(
           <TextInput
             style={styles.editInput}
             value={d.title ?? ''}
-            onChangeText={(t) => updateDraft(p.proposalId, { title: t })}
+            onChangeText={(t) => updateDraft(p.proposalId, {title: t})}
           />
           <Text style={styles.editLabel}>Text</Text>
           <TextInput
             style={styles.editInput}
             value={d.text ?? ''}
-            onChangeText={(t) => updateDraft(p.proposalId, { text: t })}
+            onChangeText={(t) => updateDraft(p.proposalId, {text: t})}
           />
           <Text style={styles.editLabel}>Remind at (ISO datetime)</Text>
           <TextInput
             style={styles.editInput}
             value={d.remindAt ?? ''}
-            onChangeText={(t) => updateDraft(p.proposalId, { remindAt: t })}
+            onChangeText={(t) => updateDraft(p.proposalId, {remindAt: t})}
           />
         </View>
       );
@@ -379,20 +430,20 @@ function proposalEditors(
           <TextInput
             style={styles.editInput}
             value={d.title ?? ''}
-            onChangeText={(t) => updateDraft(p.proposalId, { title: t })}
+            onChangeText={(t) => updateDraft(p.proposalId, {title: t})}
           />
           <Text style={styles.editLabel}>Motivation</Text>
           <TextInput
             multiline
             style={[styles.editInput, styles.editMultiline]}
             value={d.motivation ?? ''}
-            onChangeText={(t) => updateDraft(p.proposalId, { motivation: t })}
+            onChangeText={(t) => updateDraft(p.proposalId, {motivation: t})}
           />
           <Text style={styles.editLabel}>Target date (ISO datetime or empty)</Text>
           <TextInput
             style={styles.editInput}
             value={d.targetDate ?? ''}
-            onChangeText={(t) => updateDraft(p.proposalId, { targetDate: t })}
+            onChangeText={(t) => updateDraft(p.proposalId, {targetDate: t})}
           />
         </View>
       );
@@ -462,8 +513,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 14,
   },
-  buttonPressed: { opacity: 0.92 },
-  buttonDisabled: { opacity: 0.6 },
+  buttonPressed: {opacity: 0.92},
+  buttonDisabled: {opacity: 0.6},
   buttonLabel: {
     color: '#fff',
     fontSize: 16,
@@ -490,6 +541,30 @@ const styles = StyleSheet.create({
     color: '#64748b',
     fontSize: 12,
     marginTop: -4,
+  },
+  messageCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 8,
+    padding: 14,
+  },
+  userMessageCard: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#e0efff',
+    borderColor: '#bfdbfe',
+    maxWidth: '92%',
+  },
+  assistantMessageCard: {
+    alignSelf: 'stretch',
+    backgroundColor: '#fff',
+    borderColor: '#e2e8f0',
+  },
+  messageRole: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
   },
   card: {
     backgroundColor: '#fff',
@@ -582,7 +657,7 @@ const styles = StyleSheet.create({
     minHeight: 72,
     textAlignVertical: 'top',
   },
-  link: { marginTop: 4 },
+  link: {marginTop: 4},
   linkText: {
     color: '#1d4ed8',
     fontSize: 15,

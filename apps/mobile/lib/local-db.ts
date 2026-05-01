@@ -1,6 +1,7 @@
 import { randomUUID } from 'expo-crypto';
 import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 import type { LocalContextRow } from './context-packet';
+import { recentSliceOldestFirst } from './chat-history';
 import { decryptLocalContent, encryptLocalContent } from './local-content-crypto';
 
 const DDL = `
@@ -116,6 +117,54 @@ export async function insertChatMessage(
     row.createdAt,
   );
   return id;
+}
+
+export type LocalChatMessage = {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  body: string;
+  clientRequestId: string | null;
+  createdAt: string;
+};
+
+/** Default cap for decrypted chat bubbles loaded into the assistant screen. */
+export const CHAT_HISTORY_DEFAULT_LIMIT = 100;
+
+/** Recent window: fetch newest first, decrypt, then oldest-first for UI. */
+export async function loadRecentChatMessagesDecrypted(
+  db: SQLiteDatabase,
+  limit: number = CHAT_HISTORY_DEFAULT_LIMIT,
+): Promise<LocalChatMessage[]> {
+  const cap = Math.min(500, Math.max(1, Math.floor(limit)));
+  const rowsDesc = await db.getAllAsync<{
+    id: string;
+    role: string;
+    body_cipher: string;
+    client_request_id: string | null;
+    created_at: string;
+  }>(
+    `SELECT id, role, body_cipher, client_request_id, created_at
+     FROM chat_messages
+     ORDER BY datetime(created_at) DESC, id DESC
+     LIMIT ?`,
+    cap,
+  );
+
+  const rowsChrono = recentSliceOldestFirst(rowsDesc, rowsDesc.length);
+  const out: LocalChatMessage[] = [];
+  for (const r of rowsChrono) {
+    const rawRole = r.role;
+    const role =
+      rawRole === 'user' || rawRole === 'assistant' || rawRole === 'system' ? rawRole : 'assistant';
+    out.push({
+      id: r.id,
+      role,
+      body: (await decryptLocalContent(r.body_cipher)) ?? '[Unable to decrypt message]',
+      clientRequestId: r.client_request_id,
+      createdAt: r.created_at,
+    });
+  }
+  return out;
 }
 
 export async function insertTaskRow(

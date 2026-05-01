@@ -2,11 +2,15 @@
 
 ## Product Direction
 
-The app is an Android-first personal assistant built around chat, tasks, notes,
-goals, reminders, and proactive help. Chat is only one input surface: the core
-system stores structured user data and lets AI propose or perform structured
-actions such as creating a task, scheduling a reminder, summarizing notes, or
-suggesting the next step toward a goal.
+The app is an Android-first personal assistant built around four mobile tabs:
+Chat, Tasks, Reminders, and Settings. Chat is the main input surface, but the
+core product value is structured local data. Tasks are larger outcomes, not
+quick todos. Each Task can contain many Subitems, related Documents, and simple
+time-based Reminders that help the user know what comes next.
+
+PA can propose creating, editing, viewing, and completing Tasks and Subitems,
+attaching or summarizing task Documents, and scheduling Reminders. The user
+remains in control of saved changes through confirmation and undo flows.
 
 ## Stack
 
@@ -45,12 +49,12 @@ flowchart TD
 
 ## Data Ownership
 
-The mobile app owns personal data: tasks, notes, reminders, goals, memory,
-conversation history, local notifications, and the local context index. The
-backend owns AI proxying, billing entitlement, usage limits, purchase
+The mobile app owns personal data: Tasks, Subitems, Documents, Reminders,
+memory, conversation history, local notifications, and the local context index.
+The backend owns AI proxying, billing entitlement, usage limits, purchase
 verification, rate limiting, and non-sensitive operational records. Shared
-schemas define the shape of tasks, notes, reminders, goals, memory items, chat
-messages, assistant actions, and subscription plans.
+schemas define the shape of Tasks, Subitems, Documents, Reminders, memory
+items, chat messages, assistant actions, and subscription plans.
 
 ## Privacy Modes
 
@@ -70,10 +74,11 @@ vector search through native libraries or SQLite extensions, but that adds nativ
 build, encryption, packaging, and model/embedding complexity. It is better to
 start with deterministic local retrieval:
 
-- Store tasks, notes, reminders, goals, memory items, and chat summaries in
+- Store Tasks, Subitems, Documents, Reminders, memory items, and chat summaries in
   encrypted SQLite.
-- Maintain searchable text columns or SQLite FTS tables for notes, memory, task
-  titles, reminder text, and conversation summaries.
+- Maintain searchable text columns or SQLite FTS tables for task titles,
+  subitem titles, document names/snippets, reminder text, memory, and
+  conversation summaries.
 - Rank candidate context by direct text match, recency, importance, due date,
   incomplete status, and explicit user pins/favorites.
 - Summarize older conversations locally into compact memory records before
@@ -100,3 +105,16 @@ content.
 Google Play release requires billing disclosure, privacy policy, data safety
 answers, account deletion, subscription cancellation access, and careful
 handling of personal data.
+
+## MVP Navigation
+
+The mobile tab bar is fixed for MVP:
+
+- Chat: natural-language assistant input, replies, and proposal review.
+- Tasks: outcome-oriented work containers with Subitems and Documents.
+- Reminders: simple scheduled prompts tied to a Task or Subitem.
+- Settings: account, subscription, privacy, export/delete, and AI data sharing.
+
+Notes and Goals are not top-level MVP tabs. If needed, note-like references
+belong to task Documents, and goal-like planning belongs inside Tasks until the
+core loop proves demand for separate surfaces.

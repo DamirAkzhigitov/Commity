@@ -9,9 +9,9 @@ It currently has three main workspaces:
 - `apps/api`: NestJS backend using TypeScript, Prisma, PostgreSQL, and OpenAI.
 - `packages/shared`: shared Zod schemas and TypeScript types used by mobile and API.
 
-The mobile app has a starter home screen that communicates the product direction:
-chat becomes structured tasks, notes, reminders, goals, and subscription-backed
-assistant features. It is not connected to the backend yet.
+The mobile app is being narrowed to the MVP tab model: Chat, Tasks, Reminders,
+and Settings. Chat becomes structured Tasks, Subitems, Documents, Reminders, and
+subscription-backed assistant features.
 
 The backend has initial modules for:
 
@@ -24,18 +24,20 @@ The backend has initial modules for:
 The shared package defines initial schemas for:
 
 - tasks
-- notes
+- subitems
+- documents
 - reminders
-- goals
 - memory items
 - chat messages
 - assistant actions
 - subscription plans
 
-Prisma has an initial data model for users, tasks, notes, reminders, goals,
-memory items, conversations, chat messages, usage events, and subscriptions.
-`pgvector` is represented with an unsupported vector field placeholder, but the
-database extension and migrations still need to be finalized.
+Prisma has an initial data model that predates the local-first boundary and
+includes personal assistant entities. The MVP direction is that personal Tasks,
+Subitems, Documents, Reminders, memory, and chat history are owned by mobile
+local storage by default; backend database work should focus on users,
+subscriptions, usage events, purchase verification, and non-sensitive
+operational records.
 
 The workspace currently passes:
 
@@ -53,12 +55,13 @@ npm run build
 4. [ ] Replace demo `userId` values with a real auth decision: Supabase Auth,
    Firebase Auth, or custom auth.
 5. [ ] Connect the mobile app to the backend health endpoint and assistant chat endpoint.
-6. [ ] Build the first real mobile screens: chat, task list, notes, reminders, and settings.
-7. [ ] Persist assistant-created tasks/notes/reminders securely in encrypted local SQLite
+6. [ ] Keep mobile tabs fixed to Chat, Tasks, Reminders, and Settings.
+7. [ ] Build the first real mobile screens: chat, outcome-oriented task list/detail, reminders, and settings.
+8. [ ] Persist assistant-created Tasks, Subitems, Documents, and Reminders securely in encrypted local SQLite
    on-device after user confirmation.
-8. [ ] Add local notifications for user-created reminders.
-9. [ ] Add durable usage tracking in Postgres and enforce subscription quotas.
-10. [ ] (Deferred) Add Google Play Billing integration on mobile and real backend
+9. [ ] Add local notifications for user-created reminders.
+10. [ ] Add durable usage tracking in Postgres and enforce subscription quotas.
+11. [ ] (Deferred) Add Google Play Billing integration on mobile and real backend
     purchase verification.
 
 ## Technical Questions To Answer
@@ -77,12 +80,12 @@ npm run build
   or 3 days, whichever comes first, with strict token caps; Plus gets 1,000
   messages/month with moderate token caps; Pro gets 5,000 messages/month with
   higher token caps and priority access to better models.
-- Memory strategy: local-first for MVP. Personal data, tasks, notes, reminders, and
-  manual memory are stored on-device by default in encrypted SQLite. Advanced memory
-  and summarization are deferred. Optional user-controlled backup/sync can use Google
-  Drive or similar platform storage later. The backend should avoid storing personal
-  assistant data unless needed for billing, auth, abuse prevention, or explicit
-  user-enabled cloud features.
+- Memory strategy: local-first for MVP. Personal Tasks, Subitems, Documents,
+  Reminders, chat history, and manual memory are stored on-device by default in
+  encrypted SQLite. Advanced memory and summarization are deferred. Optional
+  user-controlled backup/sync can use Google Drive or similar platform storage
+  later. The backend should avoid storing personal assistant data unless needed
+  for billing, auth, abuse prevention, or explicit user-enabled cloud features.
 - Reminder strategy: local-only scheduled notifications for MVP. The backend/AI can
   create structured reminder candidates, but the mobile app schedules confirmed
   notifications on-device. Server-driven push reminders are deferred until proactive
@@ -100,14 +103,15 @@ npm run build
 
 ## Product Questions To Answer
 
-- First target user: ADHD / overwhelmed productivity users who need help turning
-  messy thoughts into structured tasks, notes, reminders, and goals.
-- Main promise: "A real personal assistant for everyday life: just talk naturally,
-  and it helps you keep track of tasks, remember what matters, and make progress
-  on your plans and goals."
+- First target user: ADHD / overwhelmed life-admin users who need help turning
+  messy thoughts into structured Tasks, concrete Subitems, relevant Documents,
+  and timely Reminders.
+- Main promise: "A real personal assistant for everyday life: just talk
+  naturally, and it helps you organize bigger tasks, know the next step, manage
+  documents, and remember what matters."
 - Automatic assistant actions: the assistant can automatically organize and draft
-  low-risk things, including draft tasks, notes, reminder suggestions, goal plans,
-  summaries, and next-step suggestions from natural language. All assistant-made
+  low-risk things, including draft Tasks, Subitems, Document references,
+  reminder suggestions, summaries, and next-step suggestions from natural language. All assistant-made
   actions must be reversible from the UI, like a lightweight history/rollback
   system, so user can easily undo mistakes.
 - Always-confirm actions: anything with external impact or hard-to-undo
@@ -127,7 +131,7 @@ npm run build
 - AI data sharing and local-only mode: the app is AI-first. The main assistant
   experience uses AI to understand natural language, remember context, plan, and
   help proactively. Local-only mode exists as a privacy fallback for manual
-  tasks, notes, reminders, goals, search, and manual memory, but it is not the
+  Tasks, Subitems, Documents, Reminders, search, and manual memory, but it is not the
   full assistant experience. Users can mark individual items or sessions as
   private/local-only. Never send passwords, tokens, private keys, payment card
   numbers, or user-marked private data unless the user explicitly confirms.
@@ -139,7 +143,8 @@ npm run build
   plan. Free users get 25 assistant messages or 3 days, whichever comes first,
   with strict token/context limits, no voice, no proactive coaching, no advanced
   memory, and no cloud backup/sync. The free trial should still include enough AI
-  usage to create tasks, notes, reminders, and a simple plan from natural
+  usage to create a Task, break it into Subitems, attach a Document reference,
+  schedule a Reminder, and produce a simple plan from natural
   language, so users feel the core assistant loop quickly while cost stays capped.
 - Paid value drivers: users pay for ongoing assistant usefulness, not just more
   messages. Plus should include more AI messages, persistent memory, and
@@ -151,11 +156,11 @@ npm run build
   AI-first personal assistant, so the main mode sends messages/context to AI to
   help understand, remember, plan, and remind. Flow: promise screen ("Your
   personal assistant for everyday life"), how it works ("Talk naturally. It turns
-  thoughts into tasks, reminders, notes, and plans"), privacy choice (Assistant
+  messy life admin into Tasks, next steps, Documents, and Reminders"), privacy choice (Assistant
   Mode vs Local-Only Mode), sensitive data controls (ask before using health,
   finance, legal, intimate, exact location, or other people's private info),
   control screen (view, edit, forget, export, or delete memory anytime), then a
-  first real task prompt such as "What do you need help remembering today?"
+  first real task prompt such as "What bigger task do you need help moving forward?"
   Default to Assistant Mode, but clearly explain it and give visible controls for
   private/local-only items.
 
@@ -164,7 +169,7 @@ npm run build
 1. Developer foundation: Git, Docker Compose, database migration, `.env` setup.
 2. Backend foundation: auth, AI proxy, health checks, usage events, and entitlement checks.
 3. Mobile foundation: navigation, API client, loading/error states, settings.
-4. Core productivity: tasks, notes, reminders, and local notifications.
+4. Core productivity: Tasks, Subitems, Documents, Reminders, and local notifications.
 5. AI assistant: chat endpoint, structured action proposals, confirmations.
 6. Monetization: subscription screen, Play Billing, backend entitlement checks.
 7. Memory: summaries, embeddings, retrieval, context budgeting.
