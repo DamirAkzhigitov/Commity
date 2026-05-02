@@ -5,6 +5,20 @@ const path = require('path');
 const projectRoot = __dirname;
 const monorepoRoot = path.resolve(projectRoot, '../..');
 
+/** CI writes this before `eas build` so EXPO_PUBLIC_* reach Metro on EAS (runner env does not). */
+const easPreviewEnvPath = path.join(projectRoot, 'eas-build-preview.env');
+if (fs.existsSync(easPreviewEnvPath)) {
+  for (const line of fs.readFileSync(easPreviewEnvPath, 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    const value = trimmed.slice(eq + 1).trim();
+    if (key) process.env[key] = value;
+  }
+}
+
 const config = getDefaultConfig(projectRoot);
 
 config.watchFolders = Array.from(new Set([...(config.watchFolders || []), monorepoRoot]));

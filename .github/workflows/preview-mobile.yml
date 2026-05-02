@@ -14,6 +14,10 @@ name: preview-mobile
 #   - EXPO_PUBLIC_API_BASE_URL_DEV : Fallback API URL used when triggered
 #     directly (mobile-only PRs that don't redeploy the API).
 #
+# EAS cloud builds do not inherit the GitHub job environment. Public env is
+# written to apps/mobile/eas-build-preview.env and force-included via
+# repo-root .easignore; Metro loads it before bundling.
+#
 # When invoked from `preview-api.yml`, `api_base_url` is passed as a
 # workflow_call input and overrides the fallback secret.
 
@@ -87,14 +91,29 @@ jobs:
           fi
           echo "api_base_url=$URL" >> "$GITHUB_OUTPUT"
 
+      - name: Write Expo public env for EAS bundle
+        working-directory: apps/mobile
+        env:
+          EXPO_PUBLIC_API_BASE_URL: ${{ steps.api.outputs.api_base_url }}
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_DEV_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_DEV_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EXPO_PUBLIC_SUPABASE_URL}" ] || [ -z "${EXPO_PUBLIC_SUPABASE_ANON_KEY}" ]; then
+            echo "::error::Set repository secrets SUPABASE_DEV_URL and SUPABASE_DEV_ANON_KEY (same values as preview-api)."
+            exit 1
+          fi
+          {
+            echo "EXPO_PUBLIC_API_BASE_URL=${EXPO_PUBLIC_API_BASE_URL}"
+            echo "EXPO_PUBLIC_SUPABASE_URL=${EXPO_PUBLIC_SUPABASE_URL}"
+            echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${EXPO_PUBLIC_SUPABASE_ANON_KEY}"
+          } > eas-build-preview.env
+
       - name: Run EAS build (preview)
         id: build
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          EXPO_PUBLIC_API_BASE_URL: ${{ steps.api.outputs.api_base_url }}
-          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_DEV_URL }}
-          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_DEV_ANON_KEY }}
         run: |
           set -euo pipefail
           MESSAGE="PR #${{ github.event.pull_request.number || github.run_id }} — ${{ github.event.pull_request.title || github.ref }}"
