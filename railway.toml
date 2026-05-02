@@ -1,0 +1,28 @@
+# Railway service configuration for the API.
+#
+# Pairs with apps/api/Dockerfile. PR Environments are configured in the
+# Railway dashboard (Settings → Environments → Pull Request Environments).
+# When enabled, every PR gets its own environment with `RAILWAY_PUBLIC_DOMAIN`
+# auto-injected and a unique URL of the form `<service>-pr-<n>.up.railway.app`.
+#
+# Reference: https://docs.railway.com/reference/config-as-code
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/api/Dockerfile"
+
+[deploy]
+startCommand = "node apps/api/dist/apps/api/src/main.js"
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Variables expected to be set on the Railway service:
+#   - DATABASE_URL          (per-PR, see preview-api workflow)
+#   - SUPABASE_URL          (shared dev project)
+#   - SUPABASE_JWT_AUD      (shared dev project, e.g. "authenticated")
+#   - API_PORT              (defaults to 3000; Railway provides $PORT, the
+#                            Nest bootstrap reads API_PORT — workflow maps
+#                            them).
+#   - OPENAI_API_KEY        (optional; mock mode otherwise)

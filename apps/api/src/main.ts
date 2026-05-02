@@ -16,8 +16,11 @@ async function bootstrap() {
     }),
   );
 
-  const port = config.get<number>('API_PORT') ?? 3000;
-  await app.listen(port);
+  // Railway / many PaaS hosts inject $PORT; respect it before falling back
+  // to the explicit API_PORT used in local dev.
+  const port =
+    config.get<number>('PORT') ?? config.get<number>('API_PORT') ?? 3000;
+  await app.listen(port, '0.0.0.0');
 }
 
 void bootstrap();
