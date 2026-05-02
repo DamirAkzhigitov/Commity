@@ -12,7 +12,11 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "test": "jest --runInBand",
-    "test:e2e": "jest --config jest.e2e.config.cjs --runInBand"
+    "test:e2e": "jest --config jest.e2e.config.cjs --runInBand",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@nestjs/common": "latest",
@@ -44,6 +48,7 @@
     "prisma": "latest",
     "supertest": "^7.2.2",
     "ts-jest": "^29.4.9",
+    "tsx": "^4.21.0",
     "typescript": "latest"
   }
 }
