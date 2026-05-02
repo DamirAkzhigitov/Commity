@@ -3,18 +3,19 @@ name: preview-mobile
 # Per-PR mobile preview build (Option A from docs/per-pr-dev-builds.md).
 #
 # Builds an Android APK on EAS with the `preview` profile and posts the
-# install URL/QR back to the PR. Pairs with `preview-api.yml` (TODO) which
-# stands up a per-PR backend on Railway and exposes its public URL via
-# the `api_base_url` workflow output / `pull_request_target` event payload.
+# install URL/QR back to the PR. Called by `preview-api.yml` via
+# `workflow_call` after the per-PR Railway backend is healthy, so the APK
+# is built against its matching API URL.
 #
 # Required GitHub repository secrets:
 #   - EXPO_TOKEN              : EAS / Expo access token (https://expo.dev/accounts/[account]/settings/access-tokens)
 #   - SUPABASE_DEV_URL        : Shared dev Supabase project URL.
 #   - SUPABASE_DEV_ANON_KEY   : Shared dev Supabase anon key.
+#   - EXPO_PUBLIC_API_BASE_URL_DEV : Fallback API URL used when triggered
+#     directly (mobile-only PRs that don't redeploy the API).
 #
-# Required workflow input (one of):
-#   - `api_base_url` workflow_dispatch input, OR
-#   - the API preview workflow output piped through workflow_call.
+# When invoked from `preview-api.yml`, `api_base_url` is passed as a
+# workflow_call input and overrides the fallback secret.
 
 on:
   pull_request:
