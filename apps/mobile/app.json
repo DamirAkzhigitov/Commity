@@ -2,6 +2,7 @@
   "expo": {
     "name": "Personal Assistant",
     "slug": "personal-assistant",
+    "owner": "damir.cy",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -31,6 +32,11 @@
     },
     "plugins": [
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "8188975a-96e5-4480-9da4-f1752419244b"
+      }
+    }
   }
 }
