@@ -18,6 +18,8 @@ export default function RootLayout() {
             <Stack.Screen name="index" options={{ title: 'Personal Assistant' }} />
             <Stack.Screen name="sign-in" options={{ title: 'Sign in' }} />
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="task/[id]" options={{ title: 'Task' }} />
+            <Stack.Screen name="task/new" options={{ title: 'New task' }} />
           </Stack>
           <StatusBar style="light" />
         </>

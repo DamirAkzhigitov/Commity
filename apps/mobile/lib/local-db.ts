@@ -632,9 +632,17 @@ export async function updateDocumentEncrypted(
   );
 }
 
+export type LocalOnlyEntityKind =
+  | 'task'
+  | 'note'
+  | 'reminder'
+  | 'goal'
+  | 'subitem'
+  | 'document';
+
 export async function setEntityLocalOnly(
   db: SQLiteDatabase,
-  kind: 'task' | 'note' | 'reminder' | 'goal',
+  kind: LocalOnlyEntityKind,
   id: string,
   localOnly: boolean,
 ): Promise<void> {
@@ -646,9 +654,41 @@ export async function setEntityLocalOnly(
     await db.runAsync(`UPDATE notes SET local_only = ?, updated_at = ? WHERE id = ?`, bit, ts, id);
   } else if (kind === 'reminder') {
     await db.runAsync(`UPDATE reminders SET local_only = ?, updated_at = ? WHERE id = ?`, bit, ts, id);
-  } else {
+  } else if (kind === 'goal') {
     await db.runAsync(`UPDATE goals SET local_only = ?, updated_at = ? WHERE id = ?`, bit, ts, id);
+  } else if (kind === 'subitem') {
+    await db.runAsync(
+      `UPDATE subitems SET local_only = ?, updated_at = ? WHERE id = ?`,
+      bit,
+      ts,
+      id,
+    );
+  } else {
+    await db.runAsync(
+      `UPDATE documents SET local_only = ?, updated_at = ? WHERE id = ?`,
+      bit,
+      ts,
+      id,
+    );
   }
+}
+
+export async function setTaskStatus(
+  db: SQLiteDatabase,
+  id: string,
+  status: string,
+): Promise<void> {
+  const ts = new Date().toISOString();
+  await db.runAsync(`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`, status, ts, id);
+}
+
+export async function setSubitemStatus(
+  db: SQLiteDatabase,
+  id: string,
+  status: string,
+): Promise<void> {
+  const ts = new Date().toISOString();
+  await db.runAsync(`UPDATE subitems SET status = ?, updated_at = ? WHERE id = ?`, status, ts, id);
 }
 
 export async function undoLastAppliedCreate(db: SQLiteDatabase): Promise<boolean> {
@@ -819,6 +859,361 @@ export async function listGoalsDecrypted(db: SQLiteDatabase): Promise<GoalListRo
     });
   }
   return out;
+}
+
+export type TaskDetailRow = TaskListRow;
+
+export async function getTaskByIdDecrypted(
+  db: SQLiteDatabase,
+  id: string,
+): Promise<TaskDetailRow | null> {
+  const row = await db.getFirstAsync<{
+    id: string;
+    title_cipher: string;
+    description_cipher: string | null;
+    status: string;
+    priority: string;
+    due_at: string | null;
+    local_only: number;
+    updated_at: string;
+  }>(
+    `SELECT id, title_cipher, description_cipher, status, priority, due_at, local_only, updated_at FROM tasks WHERE id = ?`,
+    id,
+  );
+  if (!row) return null;
+  const title = (await decryptLocalContent(row.title_cipher)) ?? '';
+  const description = await decryptLocalContent(row.description_cipher);
+  return {
+    id: row.id,
+    title,
+    description,
+    status: row.status,
+    priority: row.priority,
+    dueAt: row.due_at,
+    localOnly: row.local_only !== 0,
+    updatedAt: row.updated_at,
+  };
+}
+
+export type SubitemRow = {
+  id: string;
+  taskId: string;
+  title: string;
+  status: string;
+  sortOrder: number;
+  localOnly: boolean;
+  updatedAt: string;
+};
+
+export async function listSubitemsByTaskDecrypted(
+  db: SQLiteDatabase,
+  taskId: string,
+): Promise<SubitemRow[]> {
+  const rows = await db.getAllAsync<{
+    id: string;
+    task_id: string;
+    title_cipher: string;
+    status: string;
+    sort_order: number;
+    local_only: number;
+    updated_at: string;
+  }>(
+    `SELECT id, task_id, title_cipher, status, sort_order, local_only, updated_at
+     FROM subitems
+     WHERE task_id = ?
+     ORDER BY sort_order ASC, datetime(updated_at) ASC`,
+    taskId,
+  );
+  const out: SubitemRow[] = [];
+  for (const r of rows) {
+    out.push({
+      id: r.id,
+      taskId: r.task_id,
+      title: (await decryptLocalContent(r.title_cipher)) ?? '',
+      status: r.status,
+      sortOrder: r.sort_order,
+      localOnly: r.local_only !== 0,
+      updatedAt: r.updated_at,
+    });
+  }
+  return out;
+}
+
+export type DocumentRow = {
+  id: string;
+  taskId: string;
+  title: string;
+  documentType: string | null;
+  snippet: string | null;
+  refUri: string | null;
+  localOnly: boolean;
+  updatedAt: string;
+};
+
+export async function listDocumentsByTaskDecrypted(
+  db: SQLiteDatabase,
+  taskId: string,
+): Promise<DocumentRow[]> {
+  const rows = await db.getAllAsync<{
+    id: string;
+    task_id: string;
+    title_cipher: string;
+    document_type: string | null;
+    snippet_cipher: string | null;
+    ref_uri_cipher: string | null;
+    local_only: number;
+    updated_at: string;
+  }>(
+    `SELECT id, task_id, title_cipher, document_type, snippet_cipher, ref_uri_cipher, local_only, updated_at
+     FROM documents
+     WHERE task_id = ?
+     ORDER BY datetime(updated_at) DESC`,
+    taskId,
+  );
+  const out: DocumentRow[] = [];
+  for (const r of rows) {
+    out.push({
+      id: r.id,
+      taskId: r.task_id,
+      title: (await decryptLocalContent(r.title_cipher)) ?? '',
+      documentType: r.document_type,
+      snippet: await decryptLocalContent(r.snippet_cipher),
+      refUri: await decryptLocalContent(r.ref_uri_cipher),
+      localOnly: r.local_only !== 0,
+      updatedAt: r.updated_at,
+    });
+  }
+  return out;
+}
+
+export async function listRemindersLinkedToTaskDecrypted(
+  db: SQLiteDatabase,
+  taskId: string,
+  subitemIds: readonly string[],
+): Promise<ReminderListRow[]> {
+  const placeholders = subitemIds.length > 0 ? subitemIds.map(() => '?').join(',') : null;
+  const sql = placeholders
+    ? `SELECT id, title_cipher, text_cipher, remind_at, linked_task_id, linked_subitem_id, local_only, updated_at
+       FROM reminders
+       WHERE linked_task_id = ? OR linked_subitem_id IN (${placeholders})
+       ORDER BY remind_at ASC`
+    : `SELECT id, title_cipher, text_cipher, remind_at, linked_task_id, linked_subitem_id, local_only, updated_at
+       FROM reminders
+       WHERE linked_task_id = ?
+       ORDER BY remind_at ASC`;
+  const rows = await db.getAllAsync<{
+    id: string;
+    title_cipher: string;
+    text_cipher: string | null;
+    remind_at: string;
+    linked_task_id: string | null;
+    linked_subitem_id: string | null;
+    local_only: number;
+    updated_at: string;
+  }>(sql, taskId, ...subitemIds);
+  const out: ReminderListRow[] = [];
+  for (const r of rows) {
+    out.push({
+      id: r.id,
+      title: (await decryptLocalContent(r.title_cipher)) ?? '',
+      text: await decryptLocalContent(r.text_cipher),
+      remindAt: r.remind_at,
+      linkedTaskId: r.linked_task_id,
+      linkedSubitemId: r.linked_subitem_id,
+      localOnly: r.local_only !== 0,
+      updatedAt: r.updated_at,
+    });
+  }
+  return out;
+}
+
+export type ItemSourceMetaRow = {
+  itemKind: string;
+  itemLocalId: string;
+  proposalId: string;
+  clientRequestId: string | null;
+  preview: string | null;
+};
+
+export async function getItemSourceMeta(
+  db: SQLiteDatabase,
+  itemKind: string,
+  itemLocalId: string,
+): Promise<ItemSourceMetaRow | null> {
+  const row = await db.getFirstAsync<{
+    item_kind: string;
+    item_local_id: string;
+    proposal_id: string;
+    client_request_id: string | null;
+    preview_cipher: string | null;
+  }>(
+    `SELECT item_kind, item_local_id, proposal_id, client_request_id, preview_cipher
+     FROM item_source_meta WHERE item_kind = ? AND item_local_id = ?`,
+    itemKind,
+    itemLocalId,
+  );
+  if (!row) return null;
+  return {
+    itemKind: row.item_kind,
+    itemLocalId: row.item_local_id,
+    proposalId: row.proposal_id,
+    clientRequestId: row.client_request_id,
+    preview: await decryptLocalContent(row.preview_cipher),
+  };
+}
+
+/**
+ * Manually create a Task with optional inline subitems and documents.
+ * Records action_history so the same undo affordance covers manual + assistant creates.
+ */
+export async function createTaskManual(
+  db: SQLiteDatabase,
+  input: {
+    title: string;
+    description?: string;
+    priority?: 'low' | 'medium' | 'high' | 'urgent';
+    dueAt?: string | null;
+    subitems?: { title: string }[];
+    documents?: {
+      title: string;
+      documentType?: string | null;
+      snippet?: string | null;
+      localOnly?: boolean;
+    }[];
+  },
+): Promise<string> {
+  const taskId = randomUUID();
+  const ts = new Date().toISOString();
+  await insertTaskRow(db, {
+    id: taskId,
+    titleCipher: await encryptLocalContent(input.title),
+    descriptionCipher: input.description ? await encryptLocalContent(input.description) : null,
+    status: 'todo',
+    priority: input.priority ?? 'medium',
+    dueAt: input.dueAt ?? null,
+    goalId: null,
+    localOnly: 0,
+    createdAt: ts,
+    updatedAt: ts,
+  });
+  let order = 0;
+  for (const si of input.subitems ?? []) {
+    if (!si.title.trim()) continue;
+    await insertSubitemRow(db, {
+      id: randomUUID(),
+      taskId,
+      titleCipher: await encryptLocalContent(si.title.trim()),
+      status: 'todo',
+      sortOrder: order,
+      localOnly: 0,
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    order += 1;
+  }
+  for (const d of input.documents ?? []) {
+    if (!d.title.trim()) continue;
+    await insertDocumentRow(db, {
+      id: randomUUID(),
+      taskId,
+      titleCipher: await encryptLocalContent(d.title.trim()),
+      documentType: d.documentType ?? null,
+      snippetCipher: d.snippet ? await encryptLocalContent(d.snippet) : null,
+      refUriCipher: null,
+      localOnly: d.localOnly ? 1 : 0,
+      createdAt: ts,
+      updatedAt: ts,
+    });
+  }
+  await appendActionHistory(db, {
+    id: randomUUID(),
+    proposalId: `manual:${taskId}`,
+    proposalType: 'manual_create_task',
+    clientRequestId: null,
+    appliedAt: ts,
+    undoKind: 'delete_entity',
+    entityKind: 'task',
+    entityId: taskId,
+  });
+  return taskId;
+}
+
+export async function createSubitemManual(
+  db: SQLiteDatabase,
+  taskId: string,
+  title: string,
+): Promise<string> {
+  const id = randomUUID();
+  const ts = new Date().toISOString();
+  const trimmed = title.trim();
+  if (!trimmed) {
+    throw new Error('Subitem title is required');
+  }
+  const last = await db.getFirstAsync<{ max_order: number | null }>(
+    `SELECT MAX(sort_order) AS max_order FROM subitems WHERE task_id = ?`,
+    taskId,
+  );
+  const nextOrder = (last?.max_order ?? -1) + 1;
+  await insertSubitemRow(db, {
+    id,
+    taskId,
+    titleCipher: await encryptLocalContent(trimmed),
+    status: 'todo',
+    sortOrder: nextOrder,
+    localOnly: 0,
+    createdAt: ts,
+    updatedAt: ts,
+  });
+  await appendActionHistory(db, {
+    id: randomUUID(),
+    proposalId: `manual:${id}`,
+    proposalType: 'manual_create_subitem',
+    clientRequestId: null,
+    appliedAt: ts,
+    undoKind: 'delete_entity',
+    entityKind: 'subitem',
+    entityId: id,
+  });
+  return id;
+}
+
+export async function createDocumentManual(
+  db: SQLiteDatabase,
+  taskId: string,
+  input: {
+    title: string;
+    documentType?: string | null;
+    snippet?: string | null;
+    refUri?: string | null;
+    localOnly?: boolean;
+  },
+): Promise<string> {
+  const trimmed = input.title.trim();
+  if (!trimmed) throw new Error('Document title is required');
+  const id = randomUUID();
+  const ts = new Date().toISOString();
+  await insertDocumentRow(db, {
+    id,
+    taskId,
+    titleCipher: await encryptLocalContent(trimmed),
+    documentType: input.documentType ?? null,
+    snippetCipher: input.snippet ? await encryptLocalContent(input.snippet) : null,
+    refUriCipher: input.refUri ? await encryptLocalContent(input.refUri) : null,
+    localOnly: input.localOnly ? 1 : 0,
+    createdAt: ts,
+    updatedAt: ts,
+  });
+  await appendActionHistory(db, {
+    id: randomUUID(),
+    proposalId: `manual:${id}`,
+    proposalType: 'manual_create_document',
+    clientRequestId: null,
+    appliedAt: ts,
+    undoKind: 'delete_entity',
+    entityKind: 'document',
+    entityId: id,
+  });
+  return id;
 }
 
 /** Rows for outbound assistant context with privacy filtering applied later in context-packet.ts */
