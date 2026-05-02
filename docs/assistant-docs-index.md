@@ -26,6 +26,9 @@ Use it to understand each document in one minute and open only what you need.
 - [Current State And Next Steps](./current-state-and-next-steps.md)  
   Snapshot of implementation status, open questions, and sequencing.
 
+- [Per-PR Dev Builds](./per-pr-dev-builds.md)  
+  Investigation of options for shipping per-PR dev artifacts: a downloadable mobile APK / install URL plus a remote-hosted backend URL.
+
 - [Product Planning Root](./product/README.md)  
   Entry point for requirements, epics, and implementation tasks.
 
