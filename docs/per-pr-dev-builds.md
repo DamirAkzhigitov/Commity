@@ -322,48 +322,91 @@ is low, free tiers may cover the whole pipeline.
 
 ## Implementation Status
 
-### Option A — implemented (mobile half)
+The full **Recommended Pipeline** (mobile + API + DB + auth + CI glue) is
+implemented. The reviewer-facing walkthrough lives in
+[`docs/per-pr-reviewer-flow.md`](./per-pr-reviewer-flow.md).
+
+### Mobile (Option A)
 
 - `apps/mobile/eas.json` defines `development`, `preview`, and `production`
   build profiles. The `preview` profile produces a signed Android APK with
-  internal distribution, channel `preview`, and reads
+  internal distribution on EAS Update channel `preview`, and reads
   `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SUPABASE_URL`,
-  `EXPO_PUBLIC_SUPABASE_ANON_KEY` from the build environment.
-- `.github/workflows/preview-mobile.yml` runs on every PR (and via
-  `workflow_dispatch` / `workflow_call`):
-  1. Installs the workspace deps (`npm ci`) and builds
-     `@personal-assistant/shared` so the mobile bundle resolves it.
+  `EXPO_PUBLIC_SUPABASE_ANON_KEY` from the build environment (injected by
+  CI rather than pinned in `eas.json`).
+- `.github/workflows/preview-mobile.yml` (triggered by `pull_request`
+  for mobile-only diffs and by `workflow_call` from `preview-api.yml`):
+  1. `npm ci` and builds `@personal-assistant/shared` so the bundle resolves.
   2. Sets up `eas-cli` via `expo/expo-github-action@v8` with `EXPO_TOKEN`.
-  3. Resolves the API base URL — either from the `api_base_url` workflow
-     input (intended to come from `preview-api.yml`, see below) or from
-     the `EXPO_PUBLIC_API_BASE_URL_DEV` repo secret as a fallback.
-  4. Invokes `eas build --profile preview --platform android
-     --non-interactive --no-wait --json` and captures the build ID and
-     details URL.
-  5. Posts a sticky PR comment with the EAS build details link so a
-     reviewer can install the APK once the queued build finishes.
+  3. Resolves the API base URL from either the `api_base_url` workflow
+     input or the `EXPO_PUBLIC_API_BASE_URL_DEV` fallback secret.
+  4. Runs `eas build --profile preview --platform android
+     --non-interactive --no-wait --json` and posts a sticky PR comment
+     with the EAS build details URL.
 
-### Required GitHub repository secrets for Option A
+### Backend (Option 1 — Railway PR Environments)
+
+- `apps/api/Dockerfile` — multi-stage build that installs workspace
+  deps, compiles `@personal-assistant/shared`, generates the Prisma
+  client, runs `nest build`, and emits a slim non-root runtime image
+  that starts via `node apps/api/dist/apps/api/src/main.js`.
+- `railway.toml` — points Railway at `apps/api/Dockerfile`, sets the
+  start command, and configures `/health` for healthchecks. Documents
+  the variables Railway is expected to inject per environment.
+- `.dockerignore` — keeps the Docker context lean (workspace symlinks
+  preserved; mobile sources excluded).
+- `apps/api/src/main.ts` — Nest now binds to `0.0.0.0` and respects
+  Railway's `$PORT` (with `API_PORT` as the local-dev fallback).
+- `.github/workflows/preview-api.yml` — on PR open/sync:
+  1. Installs Railway CLI and resolves (or creates) a per-PR
+     environment named `pr-<number>`.
+  2. Sets per-PR Railway service variables (`DATABASE_URL`,
+     `SUPABASE_URL`, `SUPABASE_JWT_AUD`, optionally `OPENAI_API_KEY`).
+  3. `railway up` against the PR env, polls `/health` until it
+     returns 200.
+  4. Runs `npx prisma migrate deploy` and `npm run db:seed` against the
+     PR's Postgres schema.
+  5. Posts a sticky **API preview** PR comment with the URL.
+  6. Triggers `preview-mobile.yml` via `workflow_call`, passing
+     `api_base_url`, so the APK is built against the matching backend.
+  - On `pull_request: closed` it deletes the Railway PR environment.
+
+### Database
+
+- Per-PR isolation is achieved with a **schema-per-PR search path** on a
+  shared dev Postgres: each PR gets `?schema=pr_<number>` appended to
+  `DATABASE_URL_DEV`. Migrations and seeds run inside that schema, and
+  schemas are independent enough that one PR's migrations cannot break
+  another's.
+- `apps/api/prisma/seed.ts` + `npm run db:seed` (idempotent) upserts a
+  deterministic `User` keyed to a fixed UUID
+  (`00000000-0000-4000-8000-000000000001` by default) so reviewers have
+  predictable login credentials. Honours `DEV_SEED_USER_ID` /
+  `DEV_SEED_USER_EMAIL` overrides.
+- Switching to Neon-branch-per-PR later is a localised change to
+  `preview-api.yml` (replace the schema-suffix step with a Neon
+  branch-create/delete API call).
+
+### Auth
+
+- All PR environments share the dev Supabase project (single
+  `SUPABASE_URL` / `SUPABASE_JWT_AUD`). Production Supabase stays
+  isolated. JWTs from the dev project validate in every PR backend.
+
+### Required GitHub repository secrets
 
 Add these in repo Settings → Secrets and Variables → Actions before the
-workflow can succeed:
+workflows can succeed:
 
-- `EXPO_TOKEN` — Expo personal access token with project access.
-- `SUPABASE_DEV_URL`, `SUPABASE_DEV_ANON_KEY` — shared dev Supabase
-  project credentials baked into the preview bundle.
-- `EXPO_PUBLIC_API_BASE_URL_DEV` — fallback API base URL used until the
-  `preview-api.yml` workflow is added; remove once API previews are wired
-  in and pass `api_base_url` via `workflow_call`.
-
-### Outstanding follow-ups (not in this change)
-
-- TASK: Add `apps/api/Dockerfile` (or Railway nixpacks config) and a
-  `railway.toml` so Railway builds the shared package before the API.
-- TASK: Add `.github/workflows/preview-api.yml` and wire it so it emits
-  the per-PR Railway URL as a workflow output, then call
-  `preview-mobile.yml` via `workflow_call` with `api_base_url` so each
-  APK is built against its matching backend.
-- TASK: Decide DB strategy (shared vs Neon branches) and add the Prisma
-  migrate + seed step into the API workflow.
-- TASK: Document the reviewer flow (scan QR → install APK → log in with
-  seeded test user) in `docs/`.
+| Secret | Used by | Purpose |
+|---|---|---|
+| `EXPO_TOKEN` | preview-mobile | EAS / Expo personal access token. |
+| `SUPABASE_DEV_URL` | both | Shared dev Supabase project URL. |
+| `SUPABASE_DEV_ANON_KEY` | preview-mobile | Anon key baked into the APK bundle. |
+| `SUPABASE_DEV_JWT_AUD` | preview-api | JWT audience (typically `authenticated`). |
+| `EXPO_PUBLIC_API_BASE_URL_DEV` | preview-mobile | Fallback URL for mobile-only PRs that don't redeploy the API. |
+| `RAILWAY_TOKEN` | preview-api | Railway team/project token. |
+| `RAILWAY_PROJECT_ID` | preview-api | Project that owns the API service. |
+| `RAILWAY_API_SERVICE_ID` | preview-api | Railway service ID for the API. |
+| `DATABASE_URL_DEV` | preview-api | Shared dev Postgres base URL (without `?schema=...`). |
+| `OPENAI_API_KEY_DEV` | preview-api | Optional — without it the API runs in mock mode. |
