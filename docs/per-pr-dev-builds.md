@@ -320,15 +320,49 @@ is low, free tiers may cover the whole pipeline.
    and injected into the EAS build's `EXPO_PUBLIC_API_BASE_URL`. Both
    produce comments on the PR with install/visit links.
 
-## Suggested Next Tasks (not implemented in this doc)
+## Implementation Status
 
-- TASK: Create `eas.json` with `preview` profile and document required
-  Expo secrets.
+### Option A — implemented (mobile half)
+
+- `apps/mobile/eas.json` defines `development`, `preview`, and `production`
+  build profiles. The `preview` profile produces a signed Android APK with
+  internal distribution, channel `preview`, and reads
+  `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SUPABASE_URL`,
+  `EXPO_PUBLIC_SUPABASE_ANON_KEY` from the build environment.
+- `.github/workflows/preview-mobile.yml` runs on every PR (and via
+  `workflow_dispatch` / `workflow_call`):
+  1. Installs the workspace deps (`npm ci`) and builds
+     `@personal-assistant/shared` so the mobile bundle resolves it.
+  2. Sets up `eas-cli` via `expo/expo-github-action@v8` with `EXPO_TOKEN`.
+  3. Resolves the API base URL — either from the `api_base_url` workflow
+     input (intended to come from `preview-api.yml`, see below) or from
+     the `EXPO_PUBLIC_API_BASE_URL_DEV` repo secret as a fallback.
+  4. Invokes `eas build --profile preview --platform android
+     --non-interactive --no-wait --json` and captures the build ID and
+     details URL.
+  5. Posts a sticky PR comment with the EAS build details link so a
+     reviewer can install the APK once the queued build finishes.
+
+### Required GitHub repository secrets for Option A
+
+Add these in repo Settings → Secrets and Variables → Actions before the
+workflow can succeed:
+
+- `EXPO_TOKEN` — Expo personal access token with project access.
+- `SUPABASE_DEV_URL`, `SUPABASE_DEV_ANON_KEY` — shared dev Supabase
+  project credentials baked into the preview bundle.
+- `EXPO_PUBLIC_API_BASE_URL_DEV` — fallback API base URL used until the
+  `preview-api.yml` workflow is added; remove once API previews are wired
+  in and pass `api_base_url` via `workflow_call`.
+
+### Outstanding follow-ups (not in this change)
+
 - TASK: Add `apps/api/Dockerfile` (or Railway nixpacks config) and a
   `railway.toml` so Railway builds the shared package before the API.
-- TASK: Add `.github/workflows/preview-api.yml` and
-  `.github/workflows/preview-mobile.yml`. Wire them so the mobile workflow
-  consumes the API URL from the API workflow output.
+- TASK: Add `.github/workflows/preview-api.yml` and wire it so it emits
+  the per-PR Railway URL as a workflow output, then call
+  `preview-mobile.yml` via `workflow_call` with `api_base_url` so each
+  APK is built against its matching backend.
 - TASK: Decide DB strategy (shared vs Neon branches) and add the Prisma
   migrate + seed step into the API workflow.
 - TASK: Document the reviewer flow (scan QR → install APK → log in with
