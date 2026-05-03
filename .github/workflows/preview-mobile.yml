@@ -1,0 +1,155 @@
+name: preview-mobile
+
+# Per-PR mobile preview build (Option A from docs/per-pr-dev-builds.md).
+#
+# Builds an Android APK on EAS with the `preview` profile and posts the
+# install URL/QR back to the PR. Called by `preview-api.yml` via
+# `workflow_call` after the per-PR Railway backend is healthy, so the APK
+# is built against its matching API URL.
+#
+# Required GitHub repository secrets:
+#   - EXPO_TOKEN              : EAS / Expo access token (https://expo.dev/accounts/[account]/settings/access-tokens)
+#   - SUPABASE_DEV_URL        : Shared dev Supabase project URL.
+#   - SUPABASE_DEV_ANON_KEY   : Shared dev Supabase anon key.
+#   - EXPO_PUBLIC_API_BASE_URL_DEV : Fallback API URL for workflow_dispatch
+#     when no api_base_url input is provided.
+#
+# EAS cloud builds do not inherit the GitHub job environment. Public env is
+# written to apps/mobile/eas-build-preview.env and force-included via
+# repo-root .easignore; Metro loads it before bundling.
+#
+# When invoked from `preview-api.yml`, `api_base_url` is passed as a
+# workflow_call input and overrides the fallback secret.
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: "Override API base URL (defaults to EXPO_PUBLIC_API_BASE_URL_DEV secret)"
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      api_base_url:
+        description: "Public URL of the per-PR backend, e.g. https://api-pr-123.up.railway.app"
+        required: true
+        type: string
+
+concurrency:
+  group: preview-mobile-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: EAS preview build
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft != true
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Check out PR head
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Expo / EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+          packager: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared package
+        run: npm run build -w @personal-assistant/shared
+
+      - name: Resolve API base URL
+        id: api
+        run: |
+          URL="${{ inputs.api_base_url }}"
+          if [ -z "$URL" ]; then
+            URL="${{ secrets.EXPO_PUBLIC_API_BASE_URL_DEV }}"
+          fi
+          if [ -z "$URL" ]; then
+            echo "::error::No API base URL provided. Set EXPO_PUBLIC_API_BASE_URL_DEV or pass api_base_url input."
+            exit 1
+          fi
+          echo "api_base_url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Write Expo public env for EAS bundle
+        working-directory: apps/mobile
+        env:
+          EXPO_PUBLIC_API_BASE_URL: ${{ steps.api.outputs.api_base_url }}
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_DEV_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_DEV_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EXPO_PUBLIC_SUPABASE_URL}" ] || [ -z "${EXPO_PUBLIC_SUPABASE_ANON_KEY}" ]; then
+            echo "::error::Set repository secrets SUPABASE_DEV_URL and SUPABASE_DEV_ANON_KEY (same values as preview-api)."
+            exit 1
+          fi
+          {
+            echo "EXPO_PUBLIC_API_BASE_URL=${EXPO_PUBLIC_API_BASE_URL}"
+            echo "EXPO_PUBLIC_SUPABASE_URL=${EXPO_PUBLIC_SUPABASE_URL}"
+            echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${EXPO_PUBLIC_SUPABASE_ANON_KEY}"
+          } > eas-build-preview.env
+
+      - name: Run EAS build (preview)
+        id: build
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          MESSAGE="PR #${{ github.event.pull_request.number || github.run_id }} — ${{ github.event.pull_request.title || github.ref }}"
+          eas build \
+            --profile preview \
+            --platform android \
+            --non-interactive \
+            --json \
+            --no-wait \
+            --message "$MESSAGE" > build.json
+          BUILD_ID=$(node -e "console.log(JSON.parse(require('fs').readFileSync('build.json','utf8'))[0].id)")
+          BUILD_URL=$(node -e "console.log(JSON.parse(require('fs').readFileSync('build.json','utf8'))[0].buildDetailsPageUrl || '')")
+          echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+          echo "build_url=$BUILD_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Comment install link on PR
+        if: github.event.pull_request
+        uses: actions/github-script@v7
+        env:
+          BUILD_URL: ${{ steps.build.outputs.build_url }}
+          BUILD_ID: ${{ steps.build.outputs.build_id }}
+          API_URL: ${{ steps.api.outputs.api_base_url }}
+        with:
+          script: |
+            const { BUILD_URL, BUILD_ID, API_URL } = process.env;
+            const marker = '<!-- preview-mobile-comment -->';
+            const body = [
+              marker,
+              '### Mobile preview build (Android APK)',
+              '',
+              `- Build details: ${BUILD_URL || `https://expo.dev/builds/${BUILD_ID}`}`,
+              `- API base URL baked into bundle: \`${API_URL}\``,
+              '',
+              'Open the build details URL on your Android device and install the APK.',
+              'EAS continues the build in the background — refresh the link if it is still queued.',
+            ].join('\n');
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }

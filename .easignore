@@ -1,0 +1,3 @@
+# EAS merges this with .gitignore. Expo cloud builders do not see GitHub Actions
+# job env vars; see https://docs.expo.dev/eas/environment-variables/faq/
+!apps/mobile/eas-build-preview.env
