@@ -39,6 +39,12 @@ on:
       - ".github/workflows/preview-api.yml"
       - ".github/workflows/preview-mobile.yml"
 
+# Reusable workflows inherit GITHUB_TOKEN scopes from the caller. Without this,
+# workflow_call jobs default to pull-requests: none and preview-mobile cannot comment.
+permissions:
+  contents: read
+  pull-requests: write
+
 concurrency:
   group: preview-api-${{ github.event.pull_request.number }}
   cancel-in-progress: false
@@ -48,9 +54,6 @@ jobs:
     name: Railway PR deploy
     if: github.event.action != 'closed' && github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
 
     outputs:
       api_base_url: ${{ steps.url.outputs.api_base_url }}
