@@ -1,0 +1,224 @@
+name: preview-api
+
+# Per-PR API preview using Railway PR Environments (Option 1 in
+# docs/per-pr-dev-builds.md). On PR open/sync this workflow:
+#   1. Deploys the apps/api Dockerfile to the per-PR Railway environment.
+#   2. Resolves the public URL Railway assigns (`<service>-pr-<n>.up.railway.app`).
+#   3. Applies Prisma migrations and runs the deterministic dev seed.
+#   4. Posts the URL on the PR.
+#   5. Triggers preview-mobile.yml with that URL so the APK is built
+#      against the matching backend.
+#   PR path filters include apps/mobile/** so mobile-only diffs still
+#   deploy the API before EAS (no standalone pull_request on preview-mobile).
+#
+# Required GitHub repository secrets:
+#   - RAILWAY_TOKEN              : Railway team/project token (https://docs.railway.com/reference/cli-api/access-tokens).
+#   - RAILWAY_PROJECT_ID         : Railway project that owns the API service.
+#   - RAILWAY_API_SERVICE_ID     : Service ID of the API inside that project.
+#   - DATABASE_URL_DEV           : Shared dev Postgres connection string (until Neon branches land).
+#   - SUPABASE_DEV_URL           : Shared dev Supabase project URL.
+#   - SUPABASE_DEV_JWT_AUD       : Supabase JWT audience (typically `authenticated`).
+#   - SUPABASE_DEV_ANON_KEY      : Supabase anon key (forwarded to preview-mobile).
+#
+# Notes:
+#   - Railway PR Environments must be enabled in the dashboard
+#     (Settings → Environments → Pull Request Environments) for the URL
+#     fan-out to work.
+#   - `railway redeploy` is idempotent; on `synchronize` events it just
+#     redeploys against the new HEAD commit.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, closed]
+    paths:
+      - "apps/api/**"
+      - "apps/mobile/**"
+      - "packages/shared/**"
+      - "railway.toml"
+      - ".dockerignore"
+      - ".github/workflows/preview-api.yml"
+      - ".github/workflows/preview-mobile.yml"
+
+concurrency:
+  group: preview-api-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Railway PR deploy
+    if: github.event.action != 'closed' && github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    outputs:
+      api_base_url: ${{ steps.url.outputs.api_base_url }}
+
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+      RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_API_SERVICE_ID }}
+      RAILWAY_ENVIRONMENT_NAME: pr-${{ github.event.pull_request.number }}
+
+    steps:
+      - name: Check out PR head
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli@latest
+
+      - name: Resolve or create PR environment
+        id: env
+        run: |
+          set -euo pipefail
+          ENV_ID=$(railway environment list --json --project "$RAILWAY_PROJECT_ID" \
+            | node -e "const e=JSON.parse(require('fs').readFileSync(0,'utf8')); const m=e.find(x=>x.name===process.env.RAILWAY_ENVIRONMENT_NAME); console.log(m?m.id:'')")
+          if [ -z "$ENV_ID" ]; then
+            railway environment create "$RAILWAY_ENVIRONMENT_NAME" --project "$RAILWAY_PROJECT_ID"
+            ENV_ID=$(railway environment list --json --project "$RAILWAY_PROJECT_ID" \
+              | node -e "const e=JSON.parse(require('fs').readFileSync(0,'utf8')); const m=e.find(x=>x.name===process.env.RAILWAY_ENVIRONMENT_NAME); console.log(m.id)")
+          fi
+          echo "environment_id=$ENV_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Set per-PR variables on Railway
+        env:
+          DATABASE_URL_DEV: ${{ secrets.DATABASE_URL_DEV }}
+          SUPABASE_DEV_URL: ${{ secrets.SUPABASE_DEV_URL }}
+          SUPABASE_DEV_JWT_AUD: ${{ secrets.SUPABASE_DEV_JWT_AUD }}
+          OPENAI_API_KEY_DEV: ${{ secrets.OPENAI_API_KEY_DEV }}
+        run: |
+          set -euo pipefail
+          # Until Neon-branch-per-PR lands we share one dev Postgres but
+          # namespace each PR's data via a unique schema search_path.
+          PR_DB_URL="${DATABASE_URL_DEV}?schema=pr_${{ github.event.pull_request.number }}"
+          railway variables \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_NAME" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --set "DATABASE_URL=${PR_DB_URL}" \
+            --set "SUPABASE_URL=${SUPABASE_DEV_URL}" \
+            --set "SUPABASE_JWT_AUD=${SUPABASE_DEV_JWT_AUD}" \
+            ${OPENAI_API_KEY_DEV:+--set "OPENAI_API_KEY=${OPENAI_API_KEY_DEV}"}
+
+      - name: Deploy
+        run: |
+          set -euo pipefail
+          railway up \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_NAME" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --ci
+
+      - name: Resolve public URL
+        id: url
+        run: |
+          set -euo pipefail
+          DOMAIN=$(railway domain \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_NAME" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --json \
+            | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); const first=Array.isArray(d)?d[0]:d; console.log(first && (first.domain||first.url||first.host) || '')")
+          if [ -z "$DOMAIN" ]; then
+            echo "::error::Railway did not return a public domain — verify Railway PR environments are enabled and a domain is attached to the service."
+            exit 1
+          fi
+          API_BASE_URL="https://${DOMAIN}"
+          echo "api_base_url=$API_BASE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for /health
+        env:
+          API_BASE_URL: ${{ steps.url.outputs.api_base_url }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if curl -fsS -m 5 "$API_BASE_URL/health" >/dev/null; then
+              echo "API healthy at $API_BASE_URL"
+              exit 0
+            fi
+            echo "Attempt $i: waiting for $API_BASE_URL/health ..."
+            sleep 5
+          done
+          echo "::error::API did not become healthy at $API_BASE_URL within ~150s"
+          exit 1
+
+      - name: Install workspace deps (for Prisma + seed)
+        run: npm ci
+
+      - name: Build shared package
+        run: npm run build -w @personal-assistant/shared
+
+      - name: Apply migrations
+        working-directory: apps/api
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_DEV }}?schema=pr_${{ github.event.pull_request.number }}
+        run: npx prisma migrate deploy
+
+      - name: Seed deterministic dev user
+        working-directory: apps/api
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_DEV }}?schema=pr_${{ github.event.pull_request.number }}
+        run: npm run db:seed
+
+      - name: Comment URL on PR
+        uses: actions/github-script@v7
+        env:
+          API_BASE_URL: ${{ steps.url.outputs.api_base_url }}
+        with:
+          script: |
+            const { API_BASE_URL } = process.env;
+            const marker = '<!-- preview-api-comment -->';
+            const body = [
+              marker,
+              '### API preview',
+              '',
+              `- URL: ${API_BASE_URL}`,
+              `- Health: ${API_BASE_URL}/health`,
+              '',
+              'Migrations applied and dev user seeded. The mobile preview',
+              'workflow has been triggered to build an APK pointed at this URL.',
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+  trigger-mobile:
+    name: Trigger mobile preview build
+    needs: deploy
+    if: ${{ needs.deploy.outputs.api_base_url != '' }}
+    uses: ./.github/workflows/preview-mobile.yml
+    with:
+      api_base_url: ${{ needs.deploy.outputs.api_base_url }}
+    secrets: inherit
+
+  teardown:
+    name: Tear down PR environment
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+      RAILWAY_ENVIRONMENT_NAME: pr-${{ github.event.pull_request.number }}
+    steps:
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli@latest
+
+      - name: Delete PR environment
+        run: |
+          set -euo pipefail
+          railway environment delete "$RAILWAY_ENVIRONMENT_NAME" \
+            --project "$RAILWAY_PROJECT_ID" \
+            --yes || echo "Environment already removed."

@@ -33,6 +33,9 @@ yarn-error.*
 # local env files
 .env*.local
 
+# Ephemeral file for EAS preview builds from CI (see repo root .easignore)
+eas-build-preview.env
+
 # typescript
 *.tsbuildinfo
 

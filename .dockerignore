@@ -1,0 +1,26 @@
+**/node_modules
+**/dist
+**/.git
+**/.cache
+**/.expo
+**/.nyc_output
+**/coverage
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+.github
+docs
+# Keep apps/mobile/package.json so workspaces install resolves; exclude its sources.
+apps/mobile/app
+apps/mobile/assets
+apps/mobile/lib
+apps/mobile/test
+apps/mobile/context
+apps/mobile/App.tsx
+apps/mobile/index.ts
+apps/mobile/metro.config.js
+apps/mobile/app.json
+apps/mobile/vitest.config.ts
+*.md
+!apps/api/README.md
