@@ -334,8 +334,9 @@ implemented. The reviewer-facing walkthrough lives in
   `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SUPABASE_URL`,
   `EXPO_PUBLIC_SUPABASE_ANON_KEY` from the build environment (injected by
   CI rather than pinned in `eas.json`).
-- `.github/workflows/preview-mobile.yml` (triggered by `pull_request`
-  for mobile-only diffs and by `workflow_call` from `preview-api.yml`):
+- `.github/workflows/preview-mobile.yml` (invoked via `workflow_call` from
+  `preview-api.yml` after the per-PR API is healthy, or manually via
+  `workflow_dispatch`):
   1. `npm ci` and builds `@personal-assistant/shared` so the bundle resolves.
   2. Sets up `eas-cli` via `expo/expo-github-action@v8` with `EXPO_TOKEN`.
   3. Resolves the API base URL from either the `api_base_url` workflow
@@ -357,7 +358,9 @@ implemented. The reviewer-facing walkthrough lives in
   preserved; mobile sources excluded).
 - `apps/api/src/main.ts` — Nest now binds to `0.0.0.0` and respects
   Railway's `$PORT` (with `API_PORT` as the local-dev fallback).
-- `.github/workflows/preview-api.yml` — on PR open/sync:
+- `.github/workflows/preview-api.yml` — on PR open/sync when the diff
+  matches its `paths` filter (including `apps/api`, `apps/mobile`,
+  `packages/shared`, and Railway/Docker/workflow wiring):
   1. Installs Railway CLI and resolves (or creates) a per-PR
      environment named `pr-<number>`.
   2. Sets per-PR Railway service variables (`DATABASE_URL`,
@@ -404,7 +407,7 @@ workflows can succeed:
 | `SUPABASE_DEV_URL` | both | Shared dev Supabase project URL. |
 | `SUPABASE_DEV_ANON_KEY` | preview-mobile | Anon key baked into the APK bundle. |
 | `SUPABASE_DEV_JWT_AUD` | preview-api | JWT audience (typically `authenticated`). |
-| `EXPO_PUBLIC_API_BASE_URL_DEV` | preview-mobile | Fallback URL for mobile-only PRs that don't redeploy the API. |
+| `EXPO_PUBLIC_API_BASE_URL_DEV` | preview-mobile | Optional fallback when running **preview-mobile** manually (`workflow_dispatch`) without an `api_base_url` input. |
 | `RAILWAY_TOKEN` | preview-api | Railway team/project token. |
 | `RAILWAY_PROJECT_ID` | preview-api | Project that owns the API service. |
 | `RAILWAY_API_SERVICE_ID` | preview-api | Railway service ID for the API. |

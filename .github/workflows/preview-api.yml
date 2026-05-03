@@ -8,6 +8,8 @@ name: preview-api
 #   4. Posts the URL on the PR.
 #   5. Triggers preview-mobile.yml with that URL so the APK is built
 #      against the matching backend.
+#   PR path filters include apps/mobile/** so mobile-only diffs still
+#   deploy the API before EAS (no standalone pull_request on preview-mobile).
 #
 # Required GitHub repository secrets:
 #   - RAILWAY_TOKEN              : Railway team/project token (https://docs.railway.com/reference/cli-api/access-tokens).
@@ -30,10 +32,12 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, closed]
     paths:
       - "apps/api/**"
+      - "apps/mobile/**"
       - "packages/shared/**"
       - "railway.toml"
       - ".dockerignore"
       - ".github/workflows/preview-api.yml"
+      - ".github/workflows/preview-mobile.yml"
 
 concurrency:
   group: preview-api-${{ github.event.pull_request.number }}

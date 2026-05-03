@@ -6,16 +6,21 @@ covers the design decisions and CI plumbing.
 
 ## What you get on every PR
 
-When a PR is opened (and not in draft), two GitHub Action workflows run:
+When a PR is opened (and not in draft), and the diff touches paths covered
+by `.github/workflows/preview-api.yml` (API, mobile, shared package,
+Railway/Docker config, or those workflows), a single workflow
+**`preview-api`** runs. It:
 
-1. **`preview-api`** — builds `apps/api` with the Dockerfile, deploys
-   it to a per-PR Railway environment named `pr-<number>`, applies
-   Prisma migrations, runs the deterministic dev seed, and posts a PR
-   comment titled **"API preview"** with the public URL.
-2. **`preview-mobile`** — runs an EAS Build (`preview` profile, Android
-   APK) with `EXPO_PUBLIC_API_BASE_URL` baked in to point at the
-   `preview-api` URL above. Posts a PR comment titled **"Mobile preview
-   build (Android APK)"** with the EAS build details URL.
+1. Builds `apps/api` with the Dockerfile, deploys it to a per-PR Railway
+   environment named `pr-<number>`, applies Prisma migrations, runs the
+   deterministic dev seed, and posts a PR comment titled **"API preview"**
+   with the public URL.
+2. Invokes the reusable **`preview-mobile`** workflow, which runs an EAS
+   Build (`preview` profile, Android APK) with `EXPO_PUBLIC_API_BASE_URL`
+   baked in to point at that same URL. It posts a PR comment titled
+   **"Mobile preview build (Android APK)"** with the EAS build details URL.
+
+Docs-only or other out-of-scope PRs skip these checks (path filters).
 
 Reviewer time-to-test is roughly: API deploy (~1–3 min) + EAS queue +
 APK build (~8–12 min on free tier).
@@ -62,7 +67,7 @@ APK build (~8–12 min on free tier).
 | Install page on EAS shows "Build expired" | EAS retention exceeded for free tier | Push an empty commit to retrigger; mobile workflow rebuilds. |
 | App opens but every request 401s | Supabase user UUID does not match seed | Either set `DEV_SEED_USER_ID` repo secret to the Supabase user's UUID, or recreate the Supabase user with the seed UUID. |
 | `/health` returns 502 / no response | Railway PR env still warming, or DB migration failed | Check the `preview-api` job logs in the PR's "Checks" tab. |
-| Mobile workflow reports "No API base URL provided" | `EXPO_PUBLIC_API_BASE_URL_DEV` secret missing AND PR didn't touch API/shared so `preview-api` didn't run | Re-trigger via Actions → preview-mobile → "Run workflow" with an explicit `api_base_url`, or add the fallback secret. |
+| Mobile workflow reports "No API base URL provided" | Manual **preview-mobile** run via Actions without `api_base_url` and without `EXPO_PUBLIC_API_BASE_URL_DEV` | Set the fallback secret, or run workflow dispatch with an explicit `api_base_url` input. PR previews always receive the URL from **preview-api**. |
 | APK installs but home screen shows network error | API URL not reachable from device | Confirm the URL works from a desktop browser; if so, your device firewall/captive portal is blocking it. |
 
 ## Privacy reminder
