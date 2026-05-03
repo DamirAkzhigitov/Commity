@@ -11,8 +11,12 @@ name: preview-api
 #   PR path filters include apps/mobile/** so mobile-only diffs still
 #   deploy the API before EAS (no standalone pull_request on preview-mobile).
 #
-# Required GitHub repository secrets:
-#   - RAILWAY_TOKEN              : Railway account token for CI (Dashboard → Account Settings → Tokens).
+# Required GitHub repository secrets (Railway auth — use ONE of the following):
+#   - RAILWAY_API_TOKEN (recommended): Account/global token from Dashboard → Account Settings → Tokens.
+#     Required for `railway whoami` and other account-level CLI commands. Do not set RAILWAY_TOKEN when
+#     using this — the CLI prefers RAILWAY_TOKEN if both are set (see Railway docs: account vs workspace tokens).
+#   - RAILWAY_TOKEN: Project- or workspace-scoped token. Omit RAILWAY_API_TOKEN when using this.
+#     Scoped tokens cannot run `whoami`; the workflow verifies them with `railway link` + `railway environment list` instead.
 #     Fork PR workflows do not receive repository secrets; same-repo branches only unless you use a custom setup.
 #   - RAILWAY_PROJECT_ID         : Railway project that owns the API service.
 #   - RAILWAY_API_SERVICE_ID     : Service ID of the API inside that project.
@@ -60,7 +64,6 @@ jobs:
       api_base_url: ${{ steps.url.outputs.api_base_url }}
 
     env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
       RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_API_SERVICE_ID }}
       RAILWAY_ENVIRONMENT_NAME: pr-${{ github.event.pull_request.number }}
@@ -68,6 +71,29 @@ jobs:
     steps:
       - name: Check out PR head
         uses: actions/checkout@v4
+
+      - name: Configure Railway CLI authentication
+        env:
+          RAILWAY_API_TOKEN_SECRET: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_TOKEN_SECRET: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${RAILWAY_API_TOKEN_SECRET:-}" ]; then
+            {
+              echo "RAILWAY_API_TOKEN<<__EOF__"
+              printf '%s\n' "$RAILWAY_API_TOKEN_SECRET"
+              echo "__EOF__"
+            } >> "$GITHUB_ENV"
+          elif [ -n "${RAILWAY_TOKEN_SECRET:-}" ]; then
+            {
+              echo "RAILWAY_TOKEN<<__EOF__"
+              printf '%s\n' "$RAILWAY_TOKEN_SECRET"
+              echo "__EOF__"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::error::Set RAILWAY_API_TOKEN (account/global, recommended) or RAILWAY_TOKEN (scoped) in repository secrets."
+            exit 1
+          fi
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -81,11 +107,17 @@ jobs:
       - name: Verify Railway token
         run: |
           set -euo pipefail
-          if [ -z "${RAILWAY_TOKEN:-}" ]; then
-            echo "::error::RAILWAY_TOKEN is empty. Repository secrets are not available to workflows triggered from fork PRs; push a branch on this repo or open the PR from the same repository."
+          if [ -z "${RAILWAY_API_TOKEN:-}" ] && [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "::error::Railway token is empty. Repository secrets are not available to workflows triggered from fork PRs; push a branch on this repo or open the PR from the same repository."
             exit 1
           fi
-          railway whoami --json
+          # whoami requires account-level auth; scoped RAILWAY_TOKEN cannot use it (Railway CLI docs).
+          if [ -n "${RAILWAY_API_TOKEN:-}" ]; then
+            railway whoami --json
+          else
+            railway link -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID"
+            railway environment list --json >/dev/null
+          fi
 
       - name: Resolve or create PR environment
         id: env
@@ -222,21 +254,48 @@ jobs:
     if: github.event.action == 'closed'
     runs-on: ubuntu-latest
     env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
       RAILWAY_ENVIRONMENT_NAME: pr-${{ github.event.pull_request.number }}
     steps:
+      - name: Configure Railway CLI authentication
+        env:
+          RAILWAY_API_TOKEN_SECRET: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_TOKEN_SECRET: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${RAILWAY_API_TOKEN_SECRET:-}" ]; then
+            {
+              echo "RAILWAY_API_TOKEN<<__EOF__"
+              printf '%s\n' "$RAILWAY_API_TOKEN_SECRET"
+              echo "__EOF__"
+            } >> "$GITHUB_ENV"
+          elif [ -n "${RAILWAY_TOKEN_SECRET:-}" ]; then
+            {
+              echo "RAILWAY_TOKEN<<__EOF__"
+              printf '%s\n' "$RAILWAY_TOKEN_SECRET"
+              echo "__EOF__"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::error::Set RAILWAY_API_TOKEN (account/global, recommended) or RAILWAY_TOKEN (scoped) in repository secrets."
+            exit 1
+          fi
+
       - name: Install Railway CLI
         run: npm install -g @railway/cli@latest
 
       - name: Verify Railway token
         run: |
           set -euo pipefail
-          if [ -z "${RAILWAY_TOKEN:-}" ]; then
-            echo "::error::RAILWAY_TOKEN is empty. Repository secrets are not available to workflows triggered from fork PRs."
+          if [ -z "${RAILWAY_API_TOKEN:-}" ] && [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "::error::Railway token is empty. Repository secrets are not available to workflows triggered from fork PRs."
             exit 1
           fi
-          railway whoami --json
+          if [ -n "${RAILWAY_API_TOKEN:-}" ]; then
+            railway whoami --json
+          else
+            railway link -p "$RAILWAY_PROJECT_ID"
+            railway environment list --json >/dev/null
+          fi
 
       - name: Delete PR environment
         run: |
