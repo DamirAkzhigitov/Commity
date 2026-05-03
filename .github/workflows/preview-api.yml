@@ -12,7 +12,8 @@ name: preview-api
 #   deploy the API before EAS (no standalone pull_request on preview-mobile).
 #
 # Required GitHub repository secrets:
-#   - RAILWAY_TOKEN              : Railway team/project token (https://docs.railway.com/reference/cli-api/access-tokens).
+#   - RAILWAY_TOKEN              : Railway account token for CI (Dashboard → Account Settings → Tokens).
+#     Fork PR workflows do not receive repository secrets; same-repo branches only unless you use a custom setup.
 #   - RAILWAY_PROJECT_ID         : Railway project that owns the API service.
 #   - RAILWAY_API_SERVICE_ID     : Service ID of the API inside that project.
 #   - DATABASE_URL_DEV           : Shared dev Postgres connection string (until Neon branches land).
@@ -76,6 +77,15 @@ jobs:
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli@latest
+
+      - name: Verify Railway token
+        run: |
+          set -euo pipefail
+          if [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "::error::RAILWAY_TOKEN is empty. Repository secrets are not available to workflows triggered from fork PRs; push a branch on this repo or open the PR from the same repository."
+            exit 1
+          fi
+          railway whoami --json
 
       - name: Resolve or create PR environment
         id: env
@@ -218,6 +228,15 @@ jobs:
     steps:
       - name: Install Railway CLI
         run: npm install -g @railway/cli@latest
+
+      - name: Verify Railway token
+        run: |
+          set -euo pipefail
+          if [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "::error::RAILWAY_TOKEN is empty. Repository secrets are not available to workflows triggered from fork PRs."
+            exit 1
+          fi
+          railway whoami --json
 
       - name: Delete PR environment
         run: |
