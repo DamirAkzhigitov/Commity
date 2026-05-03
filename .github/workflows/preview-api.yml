@@ -81,12 +81,13 @@ jobs:
         id: env
         run: |
           set -euo pipefail
-          ENV_ID=$(railway environment list --json --project "$RAILWAY_PROJECT_ID" \
-            | node -e "const e=JSON.parse(require('fs').readFileSync(0,'utf8')); const m=e.find(x=>x.name===process.env.RAILWAY_ENVIRONMENT_NAME); console.log(m?m.id:'')")
+          railway link -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID"
+          ENV_ID=$(railway environment list --json \
+            | node -e "const r=JSON.parse(require('fs').readFileSync(0,'utf8')); const a=Array.isArray(r)?r:(r.environments||[]); const m=a.find(x=>x.name===process.env.RAILWAY_ENVIRONMENT_NAME); console.log(m?m.id:'')")
           if [ -z "$ENV_ID" ]; then
-            railway environment create "$RAILWAY_ENVIRONMENT_NAME" --project "$RAILWAY_PROJECT_ID"
-            ENV_ID=$(railway environment list --json --project "$RAILWAY_PROJECT_ID" \
-              | node -e "const e=JSON.parse(require('fs').readFileSync(0,'utf8')); const m=e.find(x=>x.name===process.env.RAILWAY_ENVIRONMENT_NAME); console.log(m.id)")
+            railway environment new "$RAILWAY_ENVIRONMENT_NAME"
+            ENV_ID=$(railway environment list --json \
+              | node -e "const r=JSON.parse(require('fs').readFileSync(0,'utf8')); const a=Array.isArray(r)?r:(r.environments||[]); const m=a.find(x=>x.name===process.env.RAILWAY_ENVIRONMENT_NAME); console.log(m?m.id:'')")
           fi
           echo "environment_id=$ENV_ID" >> "$GITHUB_OUTPUT"
 
@@ -100,15 +101,17 @@ jobs:
           set -euo pipefail
           # Until Neon-branch-per-PR lands we share one dev Postgres but
           # namespace each PR's data via a unique schema search_path.
+          railway link -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID"
           PR_DB_URL="${DATABASE_URL_DEV}?schema=pr_${{ github.event.pull_request.number }}"
-          railway variables \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_NAME" \
-            --service "$RAILWAY_SERVICE_ID" \
-            --set "DATABASE_URL=${PR_DB_URL}" \
-            --set "SUPABASE_URL=${SUPABASE_DEV_URL}" \
-            --set "SUPABASE_JWT_AUD=${SUPABASE_DEV_JWT_AUD}" \
-            ${OPENAI_API_KEY_DEV:+--set "OPENAI_API_KEY=${OPENAI_API_KEY_DEV}"}
+          EXTRA=()
+          if [ -n "${OPENAI_API_KEY_DEV:-}" ]; then
+            EXTRA+=("OPENAI_API_KEY=${OPENAI_API_KEY_DEV}")
+          fi
+          railway variable set -e "$RAILWAY_ENVIRONMENT_NAME" -s "$RAILWAY_SERVICE_ID" --skip-deploys \
+            "DATABASE_URL=${PR_DB_URL}" \
+            "SUPABASE_URL=${SUPABASE_DEV_URL}" \
+            "SUPABASE_JWT_AUD=${SUPABASE_DEV_JWT_AUD}" \
+            "${EXTRA[@]}"
 
       - name: Deploy
         run: |
@@ -123,11 +126,8 @@ jobs:
         id: url
         run: |
           set -euo pipefail
-          DOMAIN=$(railway domain \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_NAME" \
-            --service "$RAILWAY_SERVICE_ID" \
-            --json \
+          railway link -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_ENVIRONMENT_NAME"
+          DOMAIN=$(railway domain -s "$RAILWAY_SERVICE_ID" --json \
             | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); const first=Array.isArray(d)?d[0]:d; console.log(first && (first.domain||first.url||first.host) || '')")
           if [ -z "$DOMAIN" ]; then
             echo "::error::Railway did not return a public domain — verify Railway PR environments are enabled and a domain is attached to the service."
@@ -222,6 +222,6 @@ jobs:
       - name: Delete PR environment
         run: |
           set -euo pipefail
-          railway environment delete "$RAILWAY_ENVIRONMENT_NAME" \
-            --project "$RAILWAY_PROJECT_ID" \
-            --yes || echo "Environment already removed."
+          railway link -p "$RAILWAY_PROJECT_ID"
+          railway environment delete "$RAILWAY_ENVIRONMENT_NAME" --yes \
+            || echo "Environment already removed."
