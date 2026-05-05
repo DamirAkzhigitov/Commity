@@ -91,7 +91,7 @@ export class AssistantService {
       throw new ForbiddenException('Active subscription or trial entitlement is required.');
     }
 
-    await this.quotaPolicyService.assertSubscribedChatWithinQuota(input.userId, entitlement);
+    await this.quotaPolicyService.assertChatWithinPlanQuota(input.userId, entitlement);
 
     const t0 = Date.now();
     const { clientRequestId, message, context } = input.request;

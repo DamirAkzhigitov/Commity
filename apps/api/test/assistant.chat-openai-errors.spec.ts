@@ -40,7 +40,7 @@ async function buildService(): Promise<{
   usage: { record: jest.Mock };
 }> {
   const billing = { getEntitlement: jest.fn() };
-  const quota = { assertSubscribedChatWithinQuota: jest.fn() };
+  const quota = { assertChatWithinPlanQuota: jest.fn() };
   const usage = { record: jest.fn().mockResolvedValue(undefined) };
 
   billing.getEntitlement.mockResolvedValue({
@@ -48,7 +48,7 @@ async function buildService(): Promise<{
     plan: subscriptionPlans[0],
     active: true,
   });
-  quota.assertSubscribedChatWithinQuota.mockResolvedValue(undefined);
+  quota.assertChatWithinPlanQuota.mockResolvedValue(undefined);
 
   const moduleRef = await Test.createTestingModule({
     providers: [

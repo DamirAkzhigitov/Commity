@@ -12,37 +12,13 @@ export class QuotaPolicyService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Enforces plan monthly caps for subscribed users. Trial-only users rely on BillingService
-   * for trial caps; this is a no-op when there is no active subscription.
+   * Enforces plan monthly chat/token caps for every active entitlement (free trial,
+   * free plan, or paid). Subscribed users use a calendar UTC month window; trial users
+   * use {@link Entitlement.quotaPeriodStart} when provided.
    */
-  async assertSubscribedChatWithinQuota(userId: string, entitlement: Entitlement): Promise<void> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: { subscriptions: true },
-    });
-    if (!user) {
-      throw new ForbiddenException('User not found.');
-    }
-    const now = new Date();
-
-    const revenueCatBacked =
-      user.subscriptionExpiresAt &&
-      user.subscriptionExpiresAt > now &&
-      (user.subscriptionStatus === 'ACTIVE' ||
-        user.subscriptionStatus === 'PAST_DUE' ||
-        user.subscriptionStatus === 'CANCELED');
-
-    const activeSub = user.subscriptions.find(
-      (s) =>
-        ['active', 'canceled', 'past_due'].includes(s.status) &&
-        (!s.currentPeriodEnd || s.currentPeriodEnd > now),
-    );
-    if (!activeSub && !revenueCatBacked) {
-      return;
-    }
-
+  async assertChatWithinPlanQuota(userId: string, entitlement: Entitlement): Promise<void> {
     const plan: SubscriptionPlan = entitlement.plan;
-    const periodStart = startOfUtcMonth(now);
+    const periodStart = entitlement.quotaPeriodStart ?? startOfUtcMonth(new Date());
 
     const messageCount = await this.prisma.usageEvent.count({
       where: {

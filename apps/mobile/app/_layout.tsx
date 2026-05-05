@@ -23,6 +23,7 @@ export default function RootLayout() {
             >
               <Stack.Screen name="index" options={{ title: 'Personal Assistant' }} />
               <Stack.Screen name="sign-in" options={{ title: 'Sign in' }} />
+              <Stack.Screen name="paywall" options={{ title: 'Upgrade' }} />
               <Stack.Screen
                 name="(tabs)"
                 options={{

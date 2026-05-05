@@ -1,6 +1,8 @@
 import type { Session, User } from '@supabase/supabase-js';
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from 'react';
+import { clearCachedEntitlement } from '../lib/entitlement-cache';
 import { getAppConfig, isSupabaseConfigured } from '../lib/config';
+import { syncPurchasesWithAuthUser } from '../lib/revenuecat-session';
 import { supabaseAuth } from '../lib/supabase-auth';
 
 export type AuthContextValue = {
@@ -34,6 +36,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       data: { subscription },
     } = supabaseAuth.onAuthStateChange((_event, next) => {
       setSession(next);
+      void syncPurchasesWithAuthUser(next?.user?.id ?? null);
     });
 
     return () => {
@@ -41,6 +44,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    void syncPurchasesWithAuthUser(session?.user?.id ?? null);
+  }, [session?.user?.id]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -54,6 +61,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       signOut: async () => {
         await supabaseAuth.signOut();
+        await clearCachedEntitlement();
+        await syncPurchasesWithAuthUser(null);
       },
     }),
     [session, isLoading, configured],

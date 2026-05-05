@@ -13,12 +13,12 @@ import { UsageService } from '../src/usage/usage.service';
 describe('AssistantService', () => {
   let service: AssistantService;
   let billing: { getEntitlement: jest.Mock };
-  let quota: { assertSubscribedChatWithinQuota: jest.Mock };
+  let quota: { assertChatWithinPlanQuota: jest.Mock };
   let usage: { record: jest.Mock };
 
   beforeEach(async () => {
     billing = { getEntitlement: jest.fn() };
-    quota = { assertSubscribedChatWithinQuota: jest.fn() };
+    quota = { assertChatWithinPlanQuota: jest.fn() };
     usage = { record: jest.fn() };
 
     const moduleRef = await Test.createTestingModule({
@@ -52,7 +52,7 @@ describe('AssistantService', () => {
         request: { clientRequestId: '00000000-0000-4000-8000-000000000001', message: 'hello' },
       }),
     ).rejects.toThrow(ForbiddenException);
-    expect(quota.assertSubscribedChatWithinQuota).not.toHaveBeenCalled();
+    expect(quota.assertChatWithinPlanQuota).not.toHaveBeenCalled();
     expect(usage.record).not.toHaveBeenCalled();
   });
 
@@ -62,7 +62,7 @@ describe('AssistantService', () => {
       plan: subscriptionPlans[1],
       active: true,
     });
-    quota.assertSubscribedChatWithinQuota.mockRejectedValue(
+    quota.assertChatWithinPlanQuota.mockRejectedValue(
       new ForbiddenException('Monthly message quota exceeded.'),
     );
 
@@ -81,7 +81,7 @@ describe('AssistantService', () => {
       plan: subscriptionPlans[0],
       active: true,
     });
-    quota.assertSubscribedChatWithinQuota.mockResolvedValue(undefined);
+    quota.assertChatWithinPlanQuota.mockResolvedValue(undefined);
     usage.record.mockResolvedValue(undefined);
 
     const out = await service.chat({
@@ -108,7 +108,7 @@ describe('AssistantService', () => {
       plan: subscriptionPlans[0],
       active: true,
     });
-    quota.assertSubscribedChatWithinQuota.mockResolvedValue(undefined);
+    quota.assertChatWithinPlanQuota.mockResolvedValue(undefined);
     usage.record.mockResolvedValue(undefined);
 
     const out = await service.chat({
@@ -131,7 +131,7 @@ describe('AssistantService', () => {
         plan: subscriptionPlans[0],
         active: true,
       });
-      quota.assertSubscribedChatWithinQuota.mockResolvedValue(undefined);
+      quota.assertChatWithinPlanQuota.mockResolvedValue(undefined);
       usage.record.mockResolvedValue(undefined);
 
       await service.chat({
