@@ -52,6 +52,9 @@ Use it to understand each document in one minute and open only what you need.
 - [EPIC-001: Usable MVP Core Loop](./product/epics/EPIC-001-usable-mvp-core-loop.md)  
   Defines the primary user and delivery outcome for the first usable assistant loop.
 
+- [EPIC-002: Local Context Assistant Quality](./product/epics/EPIC-002-local-context-assistant-quality.md)
+  Defines the post-core-loop assistant quality push: bounded local context selection, grounded proposals, and repeatable quality evaluation.
+
 - [Tasks Index](./product/tasks/README.md)  
   Entry point for implementation-ready task breakdown.
 
@@ -73,14 +76,24 @@ Use it to understand each document in one minute and open only what you need.
 - [TASK-006: Task Subitems And Documents Model](./product/tasks/TASK-006-task-subitems-documents-model.md)
   Defines the next implementation slice for outcome-oriented Tasks, Subitems, Documents, linked Reminders, and local context support.
 
+- [TASK-007: Mobile Local Context Retrieval](./product/tasks/TASK-007-mobile-local-context-retrieval.md)
+  Adds bounded, ranked, privacy-filtered local context selection on mobile before every assistant request.
+
+- [TASK-008: Assistant Quality Grounding](./product/tasks/TASK-008-assistant-quality-grounding.md)
+  Adds system-prompt grounding rules and post-validation so proposals reuse existing local items instead of duplicating them.
+
+- [TASK-009: Context Quality Evaluation](./product/tasks/TASK-009-context-quality-evaluation.md)
+  Adds a deterministic fixture-based evaluation harness that scores selection + grounding against EPIC-002 success scenarios.
+
 ## Recommended Reading Order
 1. `assistant-architecture-guardrails.md` (why and boundaries)
 2. `ai-context-contract.md` (exact payload and error contract)
 3. `milestone-assistant-context-acceptance.md` (what must pass)
 4. `docs/product/README.md` (planning structure)
 5. `docs/product/requirements/REQ-001-mvp-development-sequence.md` (sequence)
-6. `docs/product/epics/EPIC-001-usable-mvp-core-loop.md` (outcome framing)
-7. `docs/product/tasks/` (implementation tasks in order)
+6. `docs/product/epics/EPIC-001-usable-mvp-core-loop.md` (core loop outcome framing)
+7. `docs/product/epics/EPIC-002-local-context-assistant-quality.md` (post-core-loop quality framing)
+8. `docs/product/tasks/` (implementation tasks in order)
 
 ## Document Ownership
 - Product/strategy updates: CTO + Product Owner

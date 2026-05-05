@@ -10,6 +10,9 @@ Current MVP task direction:
 - `TASK-004-mobile-confirmed-reminders.md`
 - `TASK-005-restore-chat-history-and-api-context.md`
 - `TASK-006-task-subitems-documents-model.md`
+- `TASK-007-mobile-local-context-retrieval.md`
+- `TASK-008-assistant-quality-grounding.md`
+- `TASK-009-context-quality-evaluation.md`
 
 Recommended file naming:
 
