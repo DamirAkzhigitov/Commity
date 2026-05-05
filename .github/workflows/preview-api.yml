@@ -20,12 +20,16 @@ name: preview-api
 #     Fork PR workflows do not receive repository secrets; same-repo branches only unless you use a custom setup.
 #   - RAILWAY_PROJECT_ID         : Railway project that owns the API service.
 #   - RAILWAY_API_SERVICE_ID     : Service ID of the API inside that project.
+#   - RAILWAY_WORKSPACE_ID       : (Optional) Railway workspace id or name. Set when the account has
+#                                   multiple workspaces; otherwise `railway link` may prompt or fail in CI.
 #   - DATABASE_URL_DEV           : Shared dev Postgres connection string (until Neon branches land).
 #   - SUPABASE_DEV_URL           : Shared dev Supabase project URL.
 #   - SUPABASE_DEV_JWT_AUD       : Supabase JWT audience (typically `authenticated`).
 #   - SUPABASE_DEV_ANON_KEY      : Supabase anon key (forwarded to preview-mobile).
 #
 # Notes:
+#   - Set repository variable RAILWAY_BASE_ENVIRONMENT if your default env is not named `production`.
+#     The workflow links to this env only so `railway environment list` / `variable set` work in CI.
 #   - Railway PR Environments must be enabled in the dashboard
 #     (Settings → Environments → Pull Request Environments) for the URL
 #     fan-out to work.
@@ -67,6 +71,8 @@ jobs:
       RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
       RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_API_SERVICE_ID }}
       RAILWAY_ENVIRONMENT_NAME: pr-${{ github.event.pull_request.number }}
+      RAILWAY_BASE_ENVIRONMENT: ${{ vars.RAILWAY_BASE_ENVIRONMENT || 'production' }}
+      RAILWAY_WORKSPACE_ID: ${{ secrets.RAILWAY_WORKSPACE_ID }}
 
     steps:
       - name: Check out PR head
@@ -115,7 +121,11 @@ jobs:
           if [ -n "${RAILWAY_API_TOKEN:-}" ]; then
             railway whoami --json
           else
-            railway link -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID"
+            LINK_WS=()
+            if [ -n "${RAILWAY_WORKSPACE_ID:-}" ]; then
+              LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
+            fi
+            railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_BASE_ENVIRONMENT" --json >/dev/null
             railway environment list --json >/dev/null
           fi
 
@@ -123,7 +133,11 @@ jobs:
         id: env
         run: |
           set -euo pipefail
-          railway link -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID"
+          LINK_WS=()
+          if [ -n "${RAILWAY_WORKSPACE_ID:-}" ]; then
+            LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
+          fi
+          railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_BASE_ENVIRONMENT" --json >/dev/null
           ENV_ID=$(railway environment list --json \
             | node -e "const r=JSON.parse(require('fs').readFileSync(0,'utf8')); const a=Array.isArray(r)?r:(r.environments||[]); const m=a.find(x=>x.name===process.env.RAILWAY_ENVIRONMENT_NAME); console.log(m?m.id:'')")
           if [ -z "$ENV_ID" ]; then
@@ -150,7 +164,11 @@ jobs:
             echo "::error::Missing Railway PR environment id from the resolve step."
             exit 1
           fi
-          railway link -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_PR_ENVIRONMENT_ID" --json >/dev/null
+          LINK_WS=()
+          if [ -n "${RAILWAY_WORKSPACE_ID:-}" ]; then
+            LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
+          fi
+          railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_PR_ENVIRONMENT_ID" --json >/dev/null
           PR_DB_URL="${DATABASE_URL_DEV}?schema=pr_${{ github.event.pull_request.number }}"
           EXTRA=()
           if [ -n "${OPENAI_API_KEY_DEV:-}" ]; then
@@ -175,7 +193,11 @@ jobs:
         id: url
         run: |
           set -euo pipefail
-          railway link -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_ENVIRONMENT_NAME"
+          LINK_WS=()
+          if [ -n "${RAILWAY_WORKSPACE_ID:-}" ]; then
+            LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
+          fi
+          railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_ENVIRONMENT_NAME" --json >/dev/null
           DOMAIN=$(railway domain -s "$RAILWAY_SERVICE_ID" --json \
             | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); const first=Array.isArray(d)?d[0]:d; console.log(first && (first.domain||first.url||first.host) || '')")
           if [ -z "$DOMAIN" ]; then
@@ -263,6 +285,8 @@ jobs:
     env:
       RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
       RAILWAY_ENVIRONMENT_NAME: pr-${{ github.event.pull_request.number }}
+      RAILWAY_BASE_ENVIRONMENT: ${{ vars.RAILWAY_BASE_ENVIRONMENT || 'production' }}
+      RAILWAY_WORKSPACE_ID: ${{ secrets.RAILWAY_WORKSPACE_ID }}
     steps:
       - name: Configure Railway CLI authentication
         env:
@@ -300,13 +324,21 @@ jobs:
           if [ -n "${RAILWAY_API_TOKEN:-}" ]; then
             railway whoami --json
           else
-            railway link -p "$RAILWAY_PROJECT_ID"
+            LINK_WS=()
+            if [ -n "${RAILWAY_WORKSPACE_ID:-}" ]; then
+              LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
+            fi
+            railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -e "$RAILWAY_BASE_ENVIRONMENT" --json >/dev/null
             railway environment list --json >/dev/null
           fi
 
       - name: Delete PR environment
         run: |
           set -euo pipefail
-          railway link -p "$RAILWAY_PROJECT_ID"
+          LINK_WS=()
+          if [ -n "${RAILWAY_WORKSPACE_ID:-}" ]; then
+            LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
+          fi
+          railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -e "$RAILWAY_BASE_ENVIRONMENT" --json >/dev/null
           railway environment delete "$RAILWAY_ENVIRONMENT_NAME" --yes \
             || echo "Environment already removed."
