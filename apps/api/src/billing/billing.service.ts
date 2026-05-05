@@ -1,6 +1,16 @@
 import { Injectable } from '@nestjs/common';
-import { type SubscriptionPlan, subscriptionPlans } from '@personal-assistant/shared';
+import type { Subscription, UserSubscriptionStatus } from '@prisma/client';
+import {
+  type EntitlementInfo,
+  getSubscriptionResponseSchema,
+  type GetSubscriptionResponse,
+  subscriptionPlans,
+  subscriptionStatusSchema,
+  type SubscriptionPlan,
+} from '@personal-assistant/shared';
 import { PrismaService } from '../prisma/prisma.service';
+
+const RC_PROVIDER = 'revenuecat';
 
 export interface Entitlement {
   userId: string;
@@ -13,6 +23,20 @@ function addUtcDays(d: Date, n: number): Date {
   const x = new Date(d);
   x.setUTCDate(x.getUTCDate() + n);
   return x;
+}
+
+function hasRevenueCatBackedAccess(
+  user: { subscriptionStatus: UserSubscriptionStatus; subscriptionExpiresAt: Date | null },
+  now: Date,
+): boolean {
+  if (!user.subscriptionExpiresAt || user.subscriptionExpiresAt <= now) {
+    return false;
+  }
+  return (
+    user.subscriptionStatus === 'ACTIVE' ||
+    user.subscriptionStatus === 'PAST_DUE' ||
+    user.subscriptionStatus === 'CANCELED'
+  );
 }
 
 @Injectable()
@@ -30,6 +54,55 @@ export class BillingService {
     return subscriptionPlans.find((p) => p.id === 'plus')!;
   }
 
+  private latestRcSubscription(subscriptions: Subscription[]): Subscription | undefined {
+    return subscriptions
+      .filter((s) => s.provider === RC_PROVIDER)
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0];
+  }
+
+  private async buildPublicEntitlement(userId: string): Promise<EntitlementInfo> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { subscriptions: true },
+    });
+    if (!user) {
+      return { status: 'FREE', planId: 'free', expiresAt: null };
+    }
+
+    const now = new Date();
+
+    if (hasRevenueCatBackedAccess(user, now)) {
+      const rc = this.latestRcSubscription(user.subscriptions);
+      const planId = rc ? this.planForProductId(rc.productId).id : subscriptionPlans[1].id;
+      const status = subscriptionStatusSchema.parse(user.subscriptionStatus);
+      return {
+        status,
+        planId,
+        expiresAt: user.subscriptionExpiresAt!.toISOString(),
+      };
+    }
+
+    const legacy = user.subscriptions.find(
+      (s) =>
+        ['active', 'canceled', 'past_due'].includes(s.status) &&
+        (!s.currentPeriodEnd || s.currentPeriodEnd > now),
+    );
+    if (legacy) {
+      return {
+        status: 'ACTIVE',
+        planId: this.planForProductId(legacy.productId).id,
+        expiresAt: legacy.currentPeriodEnd?.toISOString() ?? null,
+      };
+    }
+
+    return { status: 'FREE', planId: 'free', expiresAt: null };
+  }
+
+  async getSubscriptionResponse(userId: string): Promise<GetSubscriptionResponse> {
+    const entitlement = await this.buildPublicEntitlement(userId);
+    return getSubscriptionResponseSchema.parse({ entitlement });
+  }
+
   async getEntitlement(userId: string): Promise<Entitlement> {
     const freePlan = subscriptionPlans[0];
     const user = await this.prisma.user.findUnique({
@@ -41,8 +114,22 @@ export class BillingService {
     }
 
     const now = new Date();
+
+    if (hasRevenueCatBackedAccess(user, now)) {
+      const rc = this.latestRcSubscription(user.subscriptions);
+      const plan = rc ? this.planForProductId(rc.productId) : subscriptionPlans[1];
+      return {
+        userId,
+        plan,
+        active: true,
+        renewsAt: user.subscriptionExpiresAt!.toISOString(),
+      };
+    }
+
     const activeSub = user.subscriptions.find(
-      (s) => s.status === 'active' && (!s.currentPeriodEnd || s.currentPeriodEnd > now),
+      (s) =>
+        s.status === 'active' &&
+        (!s.currentPeriodEnd || s.currentPeriodEnd > now),
     );
 
     if (activeSub) {

@@ -24,10 +24,20 @@ export class QuotaPolicyService {
       throw new ForbiddenException('User not found.');
     }
     const now = new Date();
+
+    const revenueCatBacked =
+      user.subscriptionExpiresAt &&
+      user.subscriptionExpiresAt > now &&
+      (user.subscriptionStatus === 'ACTIVE' ||
+        user.subscriptionStatus === 'PAST_DUE' ||
+        user.subscriptionStatus === 'CANCELED');
+
     const activeSub = user.subscriptions.find(
-      (s) => s.status === 'active' && (!s.currentPeriodEnd || s.currentPeriodEnd > now),
+      (s) =>
+        ['active', 'canceled', 'past_due'].includes(s.status) &&
+        (!s.currentPeriodEnd || s.currentPeriodEnd > now),
     );
-    if (!activeSub) {
+    if (!activeSub && !revenueCatBacked) {
       return;
     }
 
