@@ -4,23 +4,32 @@ name: preview-api
 # docs/per-pr-dev-builds.md). On PR open/sync this workflow:
 #   1. Deploys the apps/api Dockerfile to the per-PR Railway environment.
 #   2. Resolves the public URL Railway assigns (`<service>-pr-<n>.up.railway.app`).
-#   3. Applies Prisma migrations and runs the deterministic dev seed.
+#   3. Configures preview runtime variables against shared dev infrastructure.
 #   4. Posts the URL on the PR.
 #   5. Triggers preview-mobile.yml with that URL so the APK is built
 #      against the matching backend.
 #   PR path filters include apps/mobile/** so mobile-only diffs still
 #   deploy the API before EAS (no standalone pull_request on preview-mobile).
 #
-# Required GitHub repository secrets:
-#   - RAILWAY_TOKEN              : Railway team/project token (https://docs.railway.com/reference/cli-api/access-tokens).
+# Required GitHub repository secrets (Railway auth — use ONE of the following):
+#   - RAILWAY_API_TOKEN (recommended): Account/global token from Dashboard → Account Settings → Tokens.
+#     Required for `railway whoami` and other account-level CLI commands. Do not set RAILWAY_TOKEN when
+#     using this — the CLI prefers RAILWAY_TOKEN if both are set (see Railway docs: account vs workspace tokens).
+#   - RAILWAY_TOKEN: Project- or workspace-scoped token. Omit RAILWAY_API_TOKEN when using this.
+#     Scoped tokens cannot run `whoami`; the workflow verifies them with `railway link` + `railway environment list` instead.
+#     Fork PR workflows do not receive repository secrets; same-repo branches only unless you use a custom setup.
 #   - RAILWAY_PROJECT_ID         : Railway project that owns the API service.
 #   - RAILWAY_API_SERVICE_ID     : Service ID of the API inside that project.
+#   - RAILWAY_WORKSPACE_ID       : (Optional) Railway workspace id or name. Set when the account has
+#                                   multiple workspaces; otherwise `railway link` may prompt or fail in CI.
 #   - DATABASE_URL_DEV           : Shared dev Postgres connection string (until Neon branches land).
 #   - SUPABASE_DEV_URL           : Shared dev Supabase project URL.
 #   - SUPABASE_DEV_JWT_AUD       : Supabase JWT audience (typically `authenticated`).
 #   - SUPABASE_DEV_ANON_KEY      : Supabase anon key (forwarded to preview-mobile).
 #
 # Notes:
+#   - Set repository variable RAILWAY_BASE_ENVIRONMENT if your default env is not named `production`.
+#     The workflow links to this env only so `railway environment list` / `variable set` work in CI.
 #   - Railway PR Environments must be enabled in the dashboard
 #     (Settings → Environments → Pull Request Environments) for the URL
 #     fan-out to work.
@@ -39,6 +48,12 @@ on:
       - ".github/workflows/preview-api.yml"
       - ".github/workflows/preview-mobile.yml"
 
+# Reusable workflows inherit GITHUB_TOKEN scopes from the caller. Without this,
+# workflow_call jobs default to pull-requests: none and preview-mobile cannot comment.
+permissions:
+  contents: read
+  pull-requests: write
+
 concurrency:
   group: preview-api-${{ github.event.pull_request.number }}
   cancel-in-progress: false
@@ -48,25 +63,46 @@ jobs:
     name: Railway PR deploy
     if: github.event.action != 'closed' && github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
 
     outputs:
       api_base_url: ${{ steps.url.outputs.api_base_url }}
 
     env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
       RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_API_SERVICE_ID }}
       RAILWAY_ENVIRONMENT_NAME: pr-${{ github.event.pull_request.number }}
+      RAILWAY_BASE_ENVIRONMENT: ${{ vars.RAILWAY_BASE_ENVIRONMENT || 'production' }}
+      RAILWAY_WORKSPACE_ID: ${{ secrets.RAILWAY_WORKSPACE_ID }}
 
     steps:
       - name: Check out PR head
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Configure Railway CLI authentication
+        env:
+          RAILWAY_API_TOKEN_SECRET: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_TOKEN_SECRET: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${RAILWAY_API_TOKEN_SECRET:-}" ]; then
+            {
+              echo "RAILWAY_API_TOKEN<<__EOF__"
+              printf '%s\n' "$RAILWAY_API_TOKEN_SECRET"
+              echo "__EOF__"
+            } >> "$GITHUB_ENV"
+          elif [ -n "${RAILWAY_TOKEN_SECRET:-}" ]; then
+            {
+              echo "RAILWAY_TOKEN<<__EOF__"
+              printf '%s\n' "$RAILWAY_TOKEN_SECRET"
+              echo "__EOF__"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::error::Set RAILWAY_API_TOKEN (account/global, recommended) or RAILWAY_TOKEN (scoped) in repository secrets."
+            exit 1
+          fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -74,38 +110,83 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli@latest
 
+      - name: Verify Railway token
+        run: |
+          set -euo pipefail
+          if [ -z "${RAILWAY_API_TOKEN:-}" ] && [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "::error::Railway token is empty. Repository secrets are not available to workflows triggered from fork PRs; push a branch on this repo or open the PR from the same repository."
+            exit 1
+          fi
+          # whoami requires account-level auth; scoped RAILWAY_TOKEN cannot use it (Railway CLI docs).
+          if [ -n "${RAILWAY_API_TOKEN:-}" ]; then
+            railway whoami --json
+          else
+            LINK_WS=()
+            if [ -n "${RAILWAY_WORKSPACE_ID:-}" ]; then
+              LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
+            fi
+            railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_BASE_ENVIRONMENT" --json >/dev/null
+            railway environment list --json >/dev/null
+          fi
+
       - name: Resolve or create PR environment
         id: env
         run: |
           set -euo pipefail
-          ENV_ID=$(railway environment list --json --project "$RAILWAY_PROJECT_ID" \
-            | node -e "const e=JSON.parse(require('fs').readFileSync(0,'utf8')); const m=e.find(x=>x.name===process.env.RAILWAY_ENVIRONMENT_NAME); console.log(m?m.id:'')")
+          LINK_WS=()
+          if [ -n "${RAILWAY_WORKSPACE_ID:-}" ]; then
+            LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
+          fi
+          railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_BASE_ENVIRONMENT" --json >/dev/null
+          ENV_ID=$(railway environment list --json \
+            | node -e "const r=JSON.parse(require('fs').readFileSync(0,'utf8')); const a=Array.isArray(r)?r:(r.environments||[]); const m=a.find(x=>x.name===process.env.RAILWAY_ENVIRONMENT_NAME); console.log(m?m.id:'')")
           if [ -z "$ENV_ID" ]; then
-            railway environment create "$RAILWAY_ENVIRONMENT_NAME" --project "$RAILWAY_PROJECT_ID"
-            ENV_ID=$(railway environment list --json --project "$RAILWAY_PROJECT_ID" \
-              | node -e "const e=JSON.parse(require('fs').readFileSync(0,'utf8')); const m=e.find(x=>x.name===process.env.RAILWAY_ENVIRONMENT_NAME); console.log(m.id)")
+            railway environment new "$RAILWAY_ENVIRONMENT_NAME"
+            ENV_ID=$(railway environment list --json \
+              | node -e "const r=JSON.parse(require('fs').readFileSync(0,'utf8')); const a=Array.isArray(r)?r:(r.environments||[]); const m=a.find(x=>x.name===process.env.RAILWAY_ENVIRONMENT_NAME); console.log(m?m.id:'')")
           fi
           echo "environment_id=$ENV_ID" >> "$GITHUB_OUTPUT"
 
       - name: Set per-PR variables on Railway
         env:
+          DATABASE_URL_DEV_POOLER: ${{ secrets.DATABASE_URL_DEV_POOLER }}
           DATABASE_URL_DEV: ${{ secrets.DATABASE_URL_DEV }}
           SUPABASE_DEV_URL: ${{ secrets.SUPABASE_DEV_URL }}
           SUPABASE_DEV_JWT_AUD: ${{ secrets.SUPABASE_DEV_JWT_AUD }}
           OPENAI_API_KEY_DEV: ${{ secrets.OPENAI_API_KEY_DEV }}
+          RAILWAY_PR_ENVIRONMENT_ID: ${{ steps.env.outputs.environment_id }}
         run: |
           set -euo pipefail
-          # Until Neon-branch-per-PR lands we share one dev Postgres but
-          # namespace each PR's data via a unique schema search_path.
-          PR_DB_URL="${DATABASE_URL_DEV}?schema=pr_${{ github.event.pull_request.number }}"
-          railway variables \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_NAME" \
-            --service "$RAILWAY_SERVICE_ID" \
-            --set "DATABASE_URL=${PR_DB_URL}" \
-            --set "SUPABASE_URL=${SUPABASE_DEV_URL}" \
-            --set "SUPABASE_JWT_AUD=${SUPABASE_DEV_JWT_AUD}" \
-            ${OPENAI_API_KEY_DEV:+--set "OPENAI_API_KEY=${OPENAI_API_KEY_DEV}"}
+          # We currently use a shared dev Postgres database for previews.
+          # Railway CLI requires a full link including --environment in CI
+          # (see https://docs.railway.com/cli/link#non-interactive-cicd).
+          if [ -z "${RAILWAY_PR_ENVIRONMENT_ID:-}" ]; then
+            echo "::error::Missing Railway PR environment id from the resolve step."
+            exit 1
+          fi
+          LINK_WS=()
+          if [ -n "${RAILWAY_WORKSPACE_ID:-}" ]; then
+            LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
+          fi
+          railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_PR_ENVIRONMENT_ID" --json >/dev/null
+          BASE_DB_URL="${DATABASE_URL_DEV_POOLER:-${DATABASE_URL_DEV}}"
+          PR_DB_URL="${BASE_DB_URL}"
+          if [[ "$PR_DB_URL" != *"sslmode="* ]]; then
+            if [[ "$PR_DB_URL" == *\?* ]]; then
+              PR_DB_URL="${PR_DB_URL}&sslmode=require"
+            else
+              PR_DB_URL="${PR_DB_URL}?sslmode=require"
+            fi
+          fi
+          EXTRA=()
+          if [ -n "${OPENAI_API_KEY_DEV:-}" ]; then
+            EXTRA+=("OPENAI_API_KEY=${OPENAI_API_KEY_DEV}")
+          fi
+          railway variable set -e "$RAILWAY_PR_ENVIRONMENT_ID" -s "$RAILWAY_SERVICE_ID" --skip-deploys \
+            "DATABASE_URL=${PR_DB_URL}" \
+            "SUPABASE_URL=${SUPABASE_DEV_URL}" \
+            "SUPABASE_JWT_AUD=${SUPABASE_DEV_JWT_AUD}" \
+            "${EXTRA[@]}"
 
       - name: Deploy
         run: |
@@ -120,16 +201,32 @@ jobs:
         id: url
         run: |
           set -euo pipefail
-          DOMAIN=$(railway domain \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_NAME" \
-            --service "$RAILWAY_SERVICE_ID" \
-            --json \
-            | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); const first=Array.isArray(d)?d[0]:d; console.log(first && (first.domain||first.url||first.host) || '')")
+          LINK_WS=()
+          if [ -n "${RAILWAY_WORKSPACE_ID:-}" ]; then
+            LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
+          fi
+          railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_ENVIRONMENT_NAME" --json >/dev/null
+          DOMAIN=""
+          for i in $(seq 1 24); do
+            DOMAIN=$(railway domain -s "$RAILWAY_SERVICE_ID" --json 2>/dev/null \
+              | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); const first=Array.isArray(d)?d[0]:d; const fromDomains=Array.isArray(d?.domains)?d.domains[0]:''; console.log(fromDomains || (first && (first.domain||first.url||first.host)) || '')" \
+              || true)
+            DOMAIN="$(echo "$DOMAIN" | tr -d '\r' | xargs)"
+            if [ -n "$DOMAIN" ]; then
+              break
+            fi
+            echo "Attempt $i: waiting for Railway public domain..."
+            sleep 5
+          done
           if [ -z "$DOMAIN" ]; then
             echo "::error::Railway did not return a public domain — verify Railway PR environments are enabled and a domain is attached to the service."
             exit 1
           fi
+          DOMAIN="${DOMAIN%/}"
+          # Railway may occasionally return a domain with one or more
+          # scheme prefixes already attached; normalize to host only.
+          DOMAIN="$(printf '%s' "$DOMAIN" | sed -E 's#^(https?://)+##')"
+          DOMAIN="${DOMAIN#/}"
           API_BASE_URL="https://${DOMAIN}"
           echo "api_base_url=$API_BASE_URL" >> "$GITHUB_OUTPUT"
 
@@ -149,24 +246,6 @@ jobs:
           echo "::error::API did not become healthy at $API_BASE_URL within ~150s"
           exit 1
 
-      - name: Install workspace deps (for Prisma + seed)
-        run: npm ci
-
-      - name: Build shared package
-        run: npm run build -w @personal-assistant/shared
-
-      - name: Apply migrations
-        working-directory: apps/api
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL_DEV }}?schema=pr_${{ github.event.pull_request.number }}
-        run: npx prisma migrate deploy
-
-      - name: Seed deterministic dev user
-        working-directory: apps/api
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL_DEV }}?schema=pr_${{ github.event.pull_request.number }}
-        run: npm run db:seed
-
       - name: Comment URL on PR
         uses: actions/github-script@v7
         env:
@@ -182,8 +261,8 @@ jobs:
               `- URL: ${API_BASE_URL}`,
               `- Health: ${API_BASE_URL}/health`,
               '',
-              'Migrations applied and dev user seeded. The mobile preview',
-              'workflow has been triggered to build an APK pointed at this URL.',
+              'Preview uses shared dev database settings (no per-PR migrations/seeding).',
+              'The mobile preview workflow has been triggered to build an APK pointed at this URL.',
             ].join('\n');
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
@@ -209,16 +288,62 @@ jobs:
     if: github.event.action == 'closed'
     runs-on: ubuntu-latest
     env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
       RAILWAY_ENVIRONMENT_NAME: pr-${{ github.event.pull_request.number }}
+      RAILWAY_BASE_ENVIRONMENT: ${{ vars.RAILWAY_BASE_ENVIRONMENT || 'production' }}
+      RAILWAY_WORKSPACE_ID: ${{ secrets.RAILWAY_WORKSPACE_ID }}
     steps:
+      - name: Configure Railway CLI authentication
+        env:
+          RAILWAY_API_TOKEN_SECRET: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_TOKEN_SECRET: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${RAILWAY_API_TOKEN_SECRET:-}" ]; then
+            {
+              echo "RAILWAY_API_TOKEN<<__EOF__"
+              printf '%s\n' "$RAILWAY_API_TOKEN_SECRET"
+              echo "__EOF__"
+            } >> "$GITHUB_ENV"
+          elif [ -n "${RAILWAY_TOKEN_SECRET:-}" ]; then
+            {
+              echo "RAILWAY_TOKEN<<__EOF__"
+              printf '%s\n' "$RAILWAY_TOKEN_SECRET"
+              echo "__EOF__"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::error::Set RAILWAY_API_TOKEN (account/global, recommended) or RAILWAY_TOKEN (scoped) in repository secrets."
+            exit 1
+          fi
+
       - name: Install Railway CLI
         run: npm install -g @railway/cli@latest
+
+      - name: Verify Railway token
+        run: |
+          set -euo pipefail
+          if [ -z "${RAILWAY_API_TOKEN:-}" ] && [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "::error::Railway token is empty. Repository secrets are not available to workflows triggered from fork PRs."
+            exit 1
+          fi
+          if [ -n "${RAILWAY_API_TOKEN:-}" ]; then
+            railway whoami --json
+          else
+            LINK_WS=()
+            if [ -n "${RAILWAY_WORKSPACE_ID:-}" ]; then
+              LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
+            fi
+            railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -e "$RAILWAY_BASE_ENVIRONMENT" --json >/dev/null
+            railway environment list --json >/dev/null
+          fi
 
       - name: Delete PR environment
         run: |
           set -euo pipefail
-          railway environment delete "$RAILWAY_ENVIRONMENT_NAME" \
-            --project "$RAILWAY_PROJECT_ID" \
-            --yes || echo "Environment already removed."
+          LINK_WS=()
+          if [ -n "${RAILWAY_WORKSPACE_ID:-}" ]; then
+            LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
+          fi
+          railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -e "$RAILWAY_BASE_ENVIRONMENT" --json >/dev/null
+          railway environment delete "$RAILWAY_ENVIRONMENT_NAME" --yes \
+            || echo "Environment already removed."
