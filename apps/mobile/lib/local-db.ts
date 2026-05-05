@@ -2,7 +2,12 @@ import { randomUUID } from 'expo-crypto';
 import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 import type { LocalContextRow } from './context-packet';
 import { recentSliceOldestFirst } from './chat-history';
-import { decryptLocalContent, encryptLocalContent } from './local-content-crypto';
+import {
+  decryptLocalContent,
+  decryptLocalContentDetailed,
+  type LocalDecryptFailureCode,
+  encryptLocalContent,
+} from './local-content-crypto';
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -172,10 +177,17 @@ export type LocalChatMessage = {
 /** Default cap for decrypted chat bubbles loaded into the assistant screen. */
 export const CHAT_HISTORY_DEFAULT_LIMIT = 100;
 
+export type ChatDecryptionDiagnostics = {
+  failedCount: number;
+  failureCodes: Partial<Record<LocalDecryptFailureCode, number>>;
+  likelyDekMismatch: boolean;
+};
+
 /** Recent window: fetch newest first, decrypt, then oldest-first for UI. */
 export async function loadRecentChatMessagesDecrypted(
   db: SQLiteDatabase,
   limit: number = CHAT_HISTORY_DEFAULT_LIMIT,
+  onDiagnostics?: (diagnostics: ChatDecryptionDiagnostics) => void,
 ): Promise<LocalChatMessage[]> {
   const cap = Math.min(500, Math.max(1, Math.floor(limit)));
   const rowsDesc = await db.getAllAsync<{
@@ -194,19 +206,37 @@ export async function loadRecentChatMessagesDecrypted(
 
   const rowsChrono = recentSliceOldestFirst(rowsDesc, rowsDesc.length);
   const out: LocalChatMessage[] = [];
+  const diagnostics: ChatDecryptionDiagnostics = {
+    failedCount: 0,
+    failureCodes: {},
+    likelyDekMismatch: false,
+  };
   for (const r of rowsChrono) {
     const rawRole = r.role;
     const role =
       rawRole === 'user' || rawRole === 'assistant' || rawRole === 'system' ? rawRole : 'assistant';
+    const decrypted = await decryptLocalContentDetailed(r.body_cipher);
+    if (!decrypted.ok) {
+      diagnostics.failedCount += 1;
+      diagnostics.failureCodes[decrypted.code] = (diagnostics.failureCodes[decrypted.code] ?? 0) + 1;
+    }
     out.push({
       id: r.id,
       role,
-      body: (await decryptLocalContent(r.body_cipher)) ?? '[Unable to decrypt message]',
+      body: decrypted.ok ? decrypted.plain : '[Unable to decrypt message]',
       clientRequestId: r.client_request_id,
       createdAt: r.created_at,
     });
   }
+  diagnostics.likelyDekMismatch =
+    diagnostics.failedCount > 0 &&
+    (diagnostics.failureCodes.decrypt_failed ?? 0) === diagnostics.failedCount;
+  onDiagnostics?.(diagnostics);
   return out;
+}
+
+export async function clearChatMessages(db: SQLiteDatabase): Promise<void> {
+  await db.runAsync(`DELETE FROM chat_messages`);
 }
 
 export async function insertTaskRow(

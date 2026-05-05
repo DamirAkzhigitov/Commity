@@ -24,13 +24,15 @@ import {AssistantApiError, postAssistantChat} from '../../lib/assistant-api';
 import {loadAssistantChatContextPacket} from '../../lib/chat-context-loader';
 import {getAppConfig} from '../../lib/config';
 import {
+  clearChatMessages,
+  type ChatDecryptionDiagnostics,
   getLocalDatabase,
   insertChatMessage,
   loadRecentChatMessagesDecrypted,
   type LocalChatMessage,
   undoLastAppliedCreate,
 } from '../../lib/local-db';
-import {encryptLocalContent} from '../../lib/local-content-crypto';
+import {clearLocalContentDek, encryptLocalContent} from '../../lib/local-content-crypto';
 import type {ProposalDraftFields} from '../../lib/merge-proposal-draft';
 import {mergeProposalWithDraft} from '../../lib/merge-proposal-draft';
 
@@ -86,6 +88,7 @@ export default function ChatScreen() {
   const [chatMessages, setChatMessages] = useState<LocalChatMessage[]>([]);
   const [proposals, setProposals] = useState<AssistantActionProposal[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [decryptRecoveryHint, setDecryptRecoveryHint] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [expandedProposalId, setExpandedProposalId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, ProposalDraftFields>>({});
@@ -98,12 +101,44 @@ export default function ChatScreen() {
     if (!session) return;
     try {
       const db = await getLocalDatabase();
-      const rows = await loadRecentChatMessagesDecrypted(db);
+      const rows = await loadRecentChatMessagesDecrypted(
+        db,
+        undefined,
+        (diagnostics: ChatDecryptionDiagnostics) => {
+          if (diagnostics.failedCount === 0) {
+            setDecryptRecoveryHint(null);
+            return;
+          }
+          if (diagnostics.likelyDekMismatch) {
+            setDecryptRecoveryHint(
+              'Local encryption key changed. Existing chat history can no longer be decrypted.',
+            );
+          } else {
+            setDecryptRecoveryHint('Some chat messages are unreadable due to invalid encrypted payloads.');
+          }
+          if (__DEV__) {
+            console.warn('[chat-decrypt] message decryption failures', diagnostics);
+          }
+        },
+      );
       setChatMessages(rows.filter((r) => r.role === 'user' || r.role === 'assistant'));
     } catch {
       // Keep displayed history on transient DB/read errors.
     }
   }, [session]);
+
+  const resetEncryptedChatState = useCallback(async () => {
+    try {
+      const db = await getLocalDatabase();
+      await clearChatMessages(db);
+      await clearLocalContentDek();
+      setChatMessages([]);
+      setDecryptRecoveryHint(null);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to reset encrypted chat data');
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -306,6 +341,18 @@ export default function ChatScreen() {
         >
           <Text style={styles.screenTitle}>Assistant chat</Text>
           <Text style={styles.meta}>API: {getAppConfig().apiBaseUrl}</Text>
+          {decryptRecoveryHint ? (
+            <View style={styles.recoveryCard}>
+              <Text style={styles.recoveryTitle}>Encrypted chat recovery needed</Text>
+              <Text style={styles.recoveryBody}>{decryptRecoveryHint}</Text>
+              <Pressable
+                onPress={() => void resetEncryptedChatState()}
+                style={({pressed}) => [styles.recoveryButton, pressed && styles.buttonPressed]}
+              >
+                <Text style={styles.recoveryButtonLabel}>Reset local chat history</Text>
+              </Pressable>
+            </View>
+          ) : null}
           {chatMessages.map((row) => (
             <View
               key={row.id}
@@ -515,6 +562,7 @@ const styles = StyleSheet.create({
     gap: 14,
     padding: 20,
     paddingBottom: 16,
+    flex:1
   },
   screenTitle: {
     color: '#0f172a',
@@ -617,6 +665,37 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.4,
     textTransform: 'uppercase',
+  },
+  recoveryCard: {
+    backgroundColor: '#fff7ed',
+    borderColor: '#fdba74',
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 8,
+    padding: 12,
+  },
+  recoveryTitle: {
+    color: '#9a3412',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  recoveryBody: {
+    color: '#7c2d12',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  recoveryButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#9a3412',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  recoveryButtonLabel: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
   },
   card: {
     backgroundColor: '#fff',
