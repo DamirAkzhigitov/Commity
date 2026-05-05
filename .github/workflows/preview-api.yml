@@ -204,7 +204,11 @@ jobs:
             echo "::error::Railway did not return a public domain — verify Railway PR environments are enabled and a domain is attached to the service."
             exit 1
           fi
-          API_BASE_URL="https://${DOMAIN}"
+          if [[ "$DOMAIN" =~ ^https?:// ]]; then
+            API_BASE_URL="${DOMAIN%/}"
+          else
+            API_BASE_URL="https://${DOMAIN%/}"
+          fi
           echo "api_base_url=$API_BASE_URL" >> "$GITHUB_OUTPUT"
 
       - name: Wait for /health
