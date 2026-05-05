@@ -139,17 +139,24 @@ jobs:
           SUPABASE_DEV_URL: ${{ secrets.SUPABASE_DEV_URL }}
           SUPABASE_DEV_JWT_AUD: ${{ secrets.SUPABASE_DEV_JWT_AUD }}
           OPENAI_API_KEY_DEV: ${{ secrets.OPENAI_API_KEY_DEV }}
+          RAILWAY_PR_ENVIRONMENT_ID: ${{ steps.env.outputs.environment_id }}
         run: |
           set -euo pipefail
           # Until Neon-branch-per-PR lands we share one dev Postgres but
           # namespace each PR's data via a unique schema search_path.
-          railway link -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID"
+          # Railway CLI requires a full link including --environment in CI
+          # (see https://docs.railway.com/cli/link#non-interactive-cicd).
+          if [ -z "${RAILWAY_PR_ENVIRONMENT_ID:-}" ]; then
+            echo "::error::Missing Railway PR environment id from the resolve step."
+            exit 1
+          fi
+          railway link -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_PR_ENVIRONMENT_ID" --json >/dev/null
           PR_DB_URL="${DATABASE_URL_DEV}?schema=pr_${{ github.event.pull_request.number }}"
           EXTRA=()
           if [ -n "${OPENAI_API_KEY_DEV:-}" ]; then
             EXTRA+=("OPENAI_API_KEY=${OPENAI_API_KEY_DEV}")
           fi
-          railway variable set -e "$RAILWAY_ENVIRONMENT_NAME" -s "$RAILWAY_SERVICE_ID" --skip-deploys \
+          railway variable set -e "$RAILWAY_PR_ENVIRONMENT_ID" -s "$RAILWAY_SERVICE_ID" --skip-deploys \
             "DATABASE_URL=${PR_DB_URL}" \
             "SUPABASE_URL=${SUPABASE_DEV_URL}" \
             "SUPABASE_JWT_AUD=${SUPABASE_DEV_JWT_AUD}" \
