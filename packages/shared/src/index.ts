@@ -66,6 +66,7 @@ export const chatMessageSchema = z.object({
 export type ChatMessage = z.infer<typeof chatMessageSchema>;
 
 export * from './assistant-contracts.js';
+export * from './billing.js';
 export * from './execution-log-format.js';
 
 export const subscriptionPlanSchema = z.object({
