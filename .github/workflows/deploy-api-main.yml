@@ -1,0 +1,99 @@
+name: deploy-api-main
+
+# Production API deploy on updates to main.
+# Intended flow:
+# - Feature PRs merge into develop and use preview-api workflow.
+# - develop is promoted to main when release-ready.
+# - push/merge to main triggers this workflow to deploy production.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/api/**"
+      - "packages/shared/**"
+      - "railway.toml"
+      - ".dockerignore"
+      - ".github/workflows/deploy-api-main.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-api-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy API to production
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+      RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_API_SERVICE_ID }}
+      RAILWAY_ENVIRONMENT_NAME: ${{ vars.RAILWAY_PRODUCTION_ENVIRONMENT || 'production' }}
+      RAILWAY_WORKSPACE_ID: ${{ secrets.RAILWAY_WORKSPACE_ID }}
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v5
+
+      - name: Configure Railway CLI authentication
+        env:
+          RAILWAY_API_TOKEN_SECRET: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_TOKEN_SECRET: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${RAILWAY_API_TOKEN_SECRET:-}" ]; then
+            {
+              echo "RAILWAY_API_TOKEN<<__EOF__"
+              printf '%s\n' "$RAILWAY_API_TOKEN_SECRET"
+              echo "__EOF__"
+            } >> "$GITHUB_ENV"
+          elif [ -n "${RAILWAY_TOKEN_SECRET:-}" ]; then
+            {
+              echo "RAILWAY_TOKEN<<__EOF__"
+              printf '%s\n' "$RAILWAY_TOKEN_SECRET"
+              echo "__EOF__"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::error::Set RAILWAY_API_TOKEN (recommended) or RAILWAY_TOKEN in repository secrets."
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli@latest
+
+      - name: Verify Railway token
+        run: |
+          set -euo pipefail
+          if [ -z "${RAILWAY_API_TOKEN:-}" ] && [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "::error::Railway token is empty."
+            exit 1
+          fi
+          if [ -n "${RAILWAY_API_TOKEN:-}" ]; then
+            railway whoami --json
+          else
+            LINK_WS=()
+            if [ -n "${RAILWAY_WORKSPACE_ID:-}" ]; then
+              LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
+            fi
+            railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_ENVIRONMENT_NAME" --json >/dev/null
+            railway environment list --json >/dev/null
+          fi
+
+      - name: Deploy to production
+        run: |
+          set -euo pipefail
+          railway up \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_NAME" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --ci
+
