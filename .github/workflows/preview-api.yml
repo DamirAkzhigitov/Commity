@@ -149,6 +149,7 @@ jobs:
 
       - name: Set per-PR variables on Railway
         env:
+          DATABASE_URL_DEV_POOLER: ${{ secrets.DATABASE_URL_DEV_POOLER }}
           DATABASE_URL_DEV: ${{ secrets.DATABASE_URL_DEV }}
           SUPABASE_DEV_URL: ${{ secrets.SUPABASE_DEV_URL }}
           SUPABASE_DEV_JWT_AUD: ${{ secrets.SUPABASE_DEV_JWT_AUD }}
@@ -169,7 +170,20 @@ jobs:
             LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
           fi
           railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_PR_ENVIRONMENT_ID" --json >/dev/null
-          PR_DB_URL="${DATABASE_URL_DEV}?schema=pr_${{ github.event.pull_request.number }}"
+          BASE_DB_URL="${DATABASE_URL_DEV_POOLER:-${DATABASE_URL_DEV}}"
+          PR_DB_URL="${BASE_DB_URL}"
+          if [[ "$PR_DB_URL" == *\?* ]]; then
+            PR_DB_URL="${PR_DB_URL}&schema=pr_${{ github.event.pull_request.number }}"
+          else
+            PR_DB_URL="${PR_DB_URL}?schema=pr_${{ github.event.pull_request.number }}"
+          fi
+          if [[ "$PR_DB_URL" != *"sslmode="* ]]; then
+            if [[ "$PR_DB_URL" == *\?* ]]; then
+              PR_DB_URL="${PR_DB_URL}&sslmode=require"
+            else
+              PR_DB_URL="${PR_DB_URL}?sslmode=require"
+            fi
+          fi
           EXTRA=()
           if [ -n "${OPENAI_API_KEY_DEV:-}" ]; then
             EXTRA+=("OPENAI_API_KEY=${OPENAI_API_KEY_DEV}")
@@ -247,14 +261,50 @@ jobs:
       - name: Apply migrations
         working-directory: apps/api
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL_DEV }}?schema=pr_${{ github.event.pull_request.number }}
-        run: npx prisma migrate deploy
+          BASE_DATABASE_URL_POOLER: ${{ secrets.DATABASE_URL_DEV_POOLER }}
+          BASE_DATABASE_URL: ${{ secrets.DATABASE_URL_DEV }}
+        run: |
+          set -euo pipefail
+          DATABASE_URL="${BASE_DATABASE_URL_POOLER:-${BASE_DATABASE_URL}}"
+          if [[ "$DATABASE_URL" == *\?* ]]; then
+            DATABASE_URL="${DATABASE_URL}&schema=pr_${{ github.event.pull_request.number }}"
+          else
+            DATABASE_URL="${DATABASE_URL}?schema=pr_${{ github.event.pull_request.number }}"
+          fi
+          if [[ "$DATABASE_URL" != *"sslmode="* ]]; then
+            DATABASE_URL="${DATABASE_URL}&sslmode=require"
+          fi
+          export DATABASE_URL
+
+          for i in $(seq 1 5); do
+            if npx prisma migrate deploy; then
+              exit 0
+            fi
+            echo "Attempt $i/5: Prisma migrate deploy failed, retrying in 10s..."
+            sleep 10
+          done
+
+          echo "::error::Prisma migrations failed after 5 attempts."
+          exit 1
 
       - name: Seed deterministic dev user
         working-directory: apps/api
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL_DEV }}?schema=pr_${{ github.event.pull_request.number }}
-        run: npm run db:seed
+          BASE_DATABASE_URL_POOLER: ${{ secrets.DATABASE_URL_DEV_POOLER }}
+          BASE_DATABASE_URL: ${{ secrets.DATABASE_URL_DEV }}
+        run: |
+          set -euo pipefail
+          DATABASE_URL="${BASE_DATABASE_URL_POOLER:-${BASE_DATABASE_URL}}"
+          if [[ "$DATABASE_URL" == *\?* ]]; then
+            DATABASE_URL="${DATABASE_URL}&schema=pr_${{ github.event.pull_request.number }}"
+          else
+            DATABASE_URL="${DATABASE_URL}?schema=pr_${{ github.event.pull_request.number }}"
+          fi
+          if [[ "$DATABASE_URL" != *"sslmode="* ]]; then
+            DATABASE_URL="${DATABASE_URL}&sslmode=require"
+          fi
+          export DATABASE_URL
+          npm run db:seed
 
       - name: Comment URL on PR
         uses: actions/github-script@v7
