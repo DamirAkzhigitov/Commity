@@ -198,25 +198,17 @@ jobs:
             LINK_WS=( -w "$RAILWAY_WORKSPACE_ID" )
           fi
           railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_ENVIRONMENT_NAME" --json >/dev/null
-          DOMAIN=""
-          for i in $(seq 1 24); do
-            DOMAIN=$(railway domain -s "$RAILWAY_SERVICE_ID" --json 2>/dev/null \
-              | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); const first=Array.isArray(d)?d[0]:d; console.log(first && (first.domain||first.url||first.host) || '')" \
-              || true)
-            DOMAIN="$(echo "$DOMAIN" | tr -d '\r' | xargs)"
-            if [ -n "$DOMAIN" ]; then
-              break
-            fi
-            echo "Attempt $i: waiting for Railway public domain..."
-            sleep 5
-          done
+          DOMAIN=$(railway domain -s "$RAILWAY_SERVICE_ID" --json \
+            | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); const first=Array.isArray(d)?d[0]:d; console.log(first && (first.domain||first.url||first.host) || '')")
           if [ -z "$DOMAIN" ]; then
             echo "::error::Railway did not return a public domain — verify Railway PR environments are enabled and a domain is attached to the service."
             exit 1
           fi
           DOMAIN="${DOMAIN%/}"
-          DOMAIN="${DOMAIN#http://}"
-          DOMAIN="${DOMAIN#https://}"
+          # Railway may occasionally return a domain with one or more
+          # scheme prefixes already attached; normalize to host only.
+          DOMAIN="$(printf '%s' "$DOMAIN" | sed -E 's#^(https?://)+##')"
+          DOMAIN="${DOMAIN#/}"
           API_BASE_URL="https://${DOMAIN}"
           echo "api_base_url=$API_BASE_URL" >> "$GITHUB_OUTPUT"
 
