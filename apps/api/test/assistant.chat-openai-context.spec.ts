@@ -23,7 +23,7 @@ jest.mock('openai', () => ({
 describe('AssistantService OpenAI request body with context', () => {
   let service: AssistantService;
   let billing: { getEntitlement: jest.Mock };
-  let quota: { assertSubscribedChatWithinQuota: jest.Mock };
+  let quota: { assertChatWithinPlanQuota: jest.Mock };
   let usage: { record: jest.Mock };
 
   const reqId = '00000000-0000-4000-8000-000000000099';
@@ -36,7 +36,7 @@ describe('AssistantService OpenAI request body with context', () => {
     });
 
     billing = { getEntitlement: jest.fn() };
-    quota = { assertSubscribedChatWithinQuota: jest.fn() };
+    quota = { assertChatWithinPlanQuota: jest.fn() };
     usage = { record: jest.fn().mockResolvedValue(undefined) };
 
     billing.getEntitlement.mockResolvedValue({
@@ -44,7 +44,7 @@ describe('AssistantService OpenAI request body with context', () => {
       plan: subscriptionPlans[0],
       active: true,
     });
-    quota.assertSubscribedChatWithinQuota.mockResolvedValue(undefined);
+    quota.assertChatWithinPlanQuota.mockResolvedValue(undefined);
 
     const moduleRef = await Test.createTestingModule({
       providers: [

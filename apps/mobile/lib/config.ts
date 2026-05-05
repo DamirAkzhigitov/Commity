@@ -12,6 +12,10 @@ export type AppConfig = {
   supabaseUrl: string;
   supabaseAnonKey: string;
   apiBaseUrl: string;
+  /** RevenueCat public SDK key for the current native platform; empty on web or when unset. */
+  revenueCatApiKey: string;
+  termsOfServiceUrl: string;
+  privacyPolicyUrl: string;
 };
 
 export function getAppConfig(): AppConfig {
@@ -21,10 +25,20 @@ export function getAppConfig(): AppConfig {
     isPhysicalDevice: Constants.isDevice,
   });
 
+  const revenueCatApiKey =
+    Platform.OS === 'ios'
+      ? (process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY ?? '')
+      : Platform.OS === 'android'
+        ? (process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY ?? '')
+        : '';
+
   return {
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL ?? '',
     supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '',
     apiBaseUrl,
+    revenueCatApiKey,
+    termsOfServiceUrl: process.env.EXPO_PUBLIC_TERMS_URL ?? 'https://example.com/terms',
+    privacyPolicyUrl: process.env.EXPO_PUBLIC_PRIVACY_URL ?? 'https://example.com/privacy',
   };
 }
 

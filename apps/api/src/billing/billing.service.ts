@@ -17,6 +17,11 @@ export interface Entitlement {
   plan: SubscriptionPlan;
   active: boolean;
   renewsAt?: string;
+  /**
+   * When set, monthly chat/token quota counts usage with createdAt >= this instant
+   * (UTC). Used for the signup trial window so calendar-month free caps do not apply.
+   */
+  quotaPeriodStart?: Date;
 }
 
 function addUtcDays(d: Date, n: number): Date {
@@ -159,7 +164,7 @@ export class BillingService {
       return { userId, plan: freePlan, active: false };
     }
 
-    return { userId, plan: freePlan, active: true };
+    return { userId, plan: freePlan, active: true, quotaPeriodStart: user.createdAt };
   }
 
   async verifyGooglePlayPurchase(userId: string, purchaseToken: string, productId: string) {
