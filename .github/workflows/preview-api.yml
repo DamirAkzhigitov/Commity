@@ -4,7 +4,7 @@ name: preview-api
 # docs/per-pr-dev-builds.md). On PR open/sync this workflow:
 #   1. Deploys the apps/api Dockerfile to the per-PR Railway environment.
 #   2. Resolves the public URL Railway assigns (`<service>-pr-<n>.up.railway.app`).
-#   3. Applies Prisma migrations and runs the deterministic dev seed.
+#   3. Configures preview runtime variables against shared dev infrastructure.
 #   4. Posts the URL on the PR.
 #   5. Triggers preview-mobile.yml with that URL so the APK is built
 #      against the matching backend.
@@ -157,8 +157,7 @@ jobs:
           RAILWAY_PR_ENVIRONMENT_ID: ${{ steps.env.outputs.environment_id }}
         run: |
           set -euo pipefail
-          # Until Neon-branch-per-PR lands we share one dev Postgres but
-          # namespace each PR's data via a unique schema search_path.
+          # We currently use a shared dev Postgres database for previews.
           # Railway CLI requires a full link including --environment in CI
           # (see https://docs.railway.com/cli/link#non-interactive-cicd).
           if [ -z "${RAILWAY_PR_ENVIRONMENT_ID:-}" ]; then
@@ -172,11 +171,6 @@ jobs:
           railway link "${LINK_WS[@]}" -p "$RAILWAY_PROJECT_ID" -s "$RAILWAY_SERVICE_ID" -e "$RAILWAY_PR_ENVIRONMENT_ID" --json >/dev/null
           BASE_DB_URL="${DATABASE_URL_DEV_POOLER:-${DATABASE_URL_DEV}}"
           PR_DB_URL="${BASE_DB_URL}"
-          if [[ "$PR_DB_URL" == *\?* ]]; then
-            PR_DB_URL="${PR_DB_URL}&schema=pr_${{ github.event.pull_request.number }}"
-          else
-            PR_DB_URL="${PR_DB_URL}?schema=pr_${{ github.event.pull_request.number }}"
-          fi
           if [[ "$PR_DB_URL" != *"sslmode="* ]]; then
             if [[ "$PR_DB_URL" == *\?* ]]; then
               PR_DB_URL="${PR_DB_URL}&sslmode=require"
@@ -252,60 +246,6 @@ jobs:
           echo "::error::API did not become healthy at $API_BASE_URL within ~150s"
           exit 1
 
-      - name: Install workspace deps (for Prisma + seed)
-        run: npm ci
-
-      - name: Build shared package
-        run: npm run build -w @personal-assistant/shared
-
-      - name: Apply migrations
-        working-directory: apps/api
-        env:
-          BASE_DATABASE_URL_POOLER: ${{ secrets.DATABASE_URL_DEV_POOLER }}
-          BASE_DATABASE_URL: ${{ secrets.DATABASE_URL_DEV }}
-        run: |
-          set -euo pipefail
-          DATABASE_URL="${BASE_DATABASE_URL_POOLER:-${BASE_DATABASE_URL}}"
-          if [[ "$DATABASE_URL" == *\?* ]]; then
-            DATABASE_URL="${DATABASE_URL}&schema=pr_${{ github.event.pull_request.number }}"
-          else
-            DATABASE_URL="${DATABASE_URL}?schema=pr_${{ github.event.pull_request.number }}"
-          fi
-          if [[ "$DATABASE_URL" != *"sslmode="* ]]; then
-            DATABASE_URL="${DATABASE_URL}&sslmode=require"
-          fi
-          export DATABASE_URL
-
-          for i in $(seq 1 5); do
-            if npx prisma migrate deploy; then
-              exit 0
-            fi
-            echo "Attempt $i/5: Prisma migrate deploy failed, retrying in 10s..."
-            sleep 10
-          done
-
-          echo "::error::Prisma migrations failed after 5 attempts."
-          exit 1
-
-      - name: Seed deterministic dev user
-        working-directory: apps/api
-        env:
-          BASE_DATABASE_URL_POOLER: ${{ secrets.DATABASE_URL_DEV_POOLER }}
-          BASE_DATABASE_URL: ${{ secrets.DATABASE_URL_DEV }}
-        run: |
-          set -euo pipefail
-          DATABASE_URL="${BASE_DATABASE_URL_POOLER:-${BASE_DATABASE_URL}}"
-          if [[ "$DATABASE_URL" == *\?* ]]; then
-            DATABASE_URL="${DATABASE_URL}&schema=pr_${{ github.event.pull_request.number }}"
-          else
-            DATABASE_URL="${DATABASE_URL}?schema=pr_${{ github.event.pull_request.number }}"
-          fi
-          if [[ "$DATABASE_URL" != *"sslmode="* ]]; then
-            DATABASE_URL="${DATABASE_URL}&sslmode=require"
-          fi
-          export DATABASE_URL
-          npm run db:seed
-
       - name: Comment URL on PR
         uses: actions/github-script@v7
         env:
@@ -321,8 +261,8 @@ jobs:
               `- URL: ${API_BASE_URL}`,
               `- Health: ${API_BASE_URL}/health`,
               '',
-              'Migrations applied and dev user seeded. The mobile preview',
-              'workflow has been triggered to build an APK pointed at this URL.',
+              'Preview uses shared dev database settings (no per-PR migrations/seeding).',
+              'The mobile preview workflow has been triggered to build an APK pointed at this URL.',
             ].join('\n');
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
