@@ -44,6 +44,33 @@ async function getOrCreateDek(): Promise<Uint8Array> {
   return dek;
 }
 
+type EncryptedPayload = {
+  ivB64: string;
+  ctB64: string;
+};
+
+export type LocalDecryptFailureCode =
+  | 'empty_payload'
+  | 'invalid_payload_json'
+  | 'invalid_payload_shape'
+  | 'decrypt_failed';
+
+export type LocalDecryptDetailedResult =
+  | { ok: true; plain: string }
+  | { ok: false; code: LocalDecryptFailureCode };
+
+function parseEncryptedPayload(payload: string): EncryptedPayload | null {
+  try {
+    const parsed = JSON.parse(payload) as Partial<EncryptedPayload>;
+    if (typeof parsed.ivB64 !== 'string' || typeof parsed.ctB64 !== 'string') {
+      return null;
+    }
+    return { ivB64: parsed.ivB64, ctB64: parsed.ctB64 };
+  } catch {
+    return null;
+  }
+}
+
 export async function encryptLocalContent(plain: string): Promise<string> {
   const dek = await getOrCreateDek();
   const ivRaw = await Crypto.getRandomBytesAsync(12);
@@ -53,17 +80,35 @@ export async function encryptLocalContent(plain: string): Promise<string> {
   return JSON.stringify({ ivB64: bytesToB64(iv), ctB64: bytesToB64(ct) });
 }
 
-export async function decryptLocalContent(payload: string | null): Promise<string | null> {
+export async function decryptLocalContentDetailed(
+  payload: string | null,
+): Promise<LocalDecryptDetailedResult> {
   if (!payload) {
-    return null;
+    return { ok: false, code: 'empty_payload' };
   }
+
+  const parsed = parseEncryptedPayload(payload);
+  if (!parsed) {
+    return payload.trim().startsWith('{')
+      ? { ok: false, code: 'invalid_payload_shape' }
+      : { ok: false, code: 'invalid_payload_json' };
+  }
+
   try {
-    const { ivB64, ctB64 } = JSON.parse(payload) as { ivB64: string; ctB64: string };
     const dek = await getOrCreateDek();
-    const cipher = gcm(dek, b64ToBytes(ivB64));
-    const plain = cipher.decrypt(b64ToBytes(ctB64));
-    return new TextDecoder().decode(plain);
+    const cipher = gcm(dek, b64ToBytes(parsed.ivB64));
+    const plain = cipher.decrypt(b64ToBytes(parsed.ctB64));
+    return { ok: true, plain: new TextDecoder().decode(plain) };
   } catch {
-    return null;
+    return { ok: false, code: 'decrypt_failed' };
   }
+}
+
+export async function decryptLocalContent(payload: string | null): Promise<string | null> {
+  const result = await decryptLocalContentDetailed(payload);
+  return result.ok ? result.plain : null;
+}
+
+export async function clearLocalContentDek(): Promise<void> {
+  await SecureStore.deleteItemAsync(LOCAL_DEK_KEY);
 }
