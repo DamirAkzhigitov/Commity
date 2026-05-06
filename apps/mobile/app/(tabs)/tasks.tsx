@@ -1,7 +1,6 @@
 import { Link, router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
-import { useLocalData } from '../../context/local-data-context';
 import {
   deleteTask,
   getLocalDatabase,
@@ -140,7 +139,7 @@ export default function TasksScreen() {
                 <Text style={styles.dangerLabel}>Delete</Text>
               </Pressable>
             </View>
-          </View>
+          </Pressable>
         ))
       )}
     </ScrollView>
