@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import type { GetSubscriptionResponse } from '@personal-assistant/shared';
 import { CurrentUser, type AuthUser } from '../auth/current-user.decorator';
 import { SupabaseJwtAuthGuard } from '../auth/supabase-jwt-auth.guard';
 import { BillingService } from './billing.service';
@@ -10,8 +11,8 @@ export class BillingController {
   constructor(private readonly billingService: BillingService) {}
 
   @Get('entitlement')
-  getEntitlement(@CurrentUser() user: AuthUser) {
-    return this.billingService.getEntitlement(user.sub);
+  getEntitlement(@CurrentUser() user: AuthUser): Promise<GetSubscriptionResponse> {
+    return this.billingService.getSubscriptionResponse(user.sub);
   }
 
   @Post('google-play/verify')

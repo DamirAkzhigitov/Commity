@@ -32,6 +32,9 @@ Use it to understand each document in one minute and open only what you need.
 - [Per-PR Reviewer Flow](./per-pr-reviewer-flow.md)  
   Operator-facing walkthrough of how to install the APK, hit the API URL, and exercise a PR end-to-end.
 
+- [Dev admin: test users and subscription state](./dev-admin-test-users.md)  
+  Non-production API routes to seed QA users and toggle subscription fields for manual testing.
+
 - [Product Planning Root](./product/README.md)  
   Entry point for requirements, epics, and implementation tasks.
 
